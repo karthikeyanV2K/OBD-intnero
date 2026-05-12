@@ -1,0 +1,63 @@
+{
+  "vscode-settings-for-mcp": {
+    "description": "Add these to VS Code settings.json for MCP server access",
+    "settings": {
+      "[copilot.enable]": true,
+      "[copilot.advanced.mcpServers]": {
+        "overdrive-agent": {
+          "command": "node",
+          "args": ["/path/to/OBD-intnero/mcp-server.js"],
+          "disabled": false
+        }
+      },
+      "[debug.console.fontSize]": 13,
+      "[extensions.ignoreRecommendations]": false
+    }
+  },
+  "vs-code-extension-manifest-addition": {
+    "description": "Add this to your VS Code extension package.json 'contributes' section if creating an extension",
+    "packageJsonContributes": {
+      "mcpServers": {
+        "overdrive-agent": {
+          "command": "node",
+          "args": ["./mcp-server.js"],
+          "documentation": "AI agent with OverdriveDB knowledge graph"
+        }
+      },
+      "commands": [
+        {
+          "command": "extension.askAgent",
+          "title": "Ask OverDrive Agent",
+          "category": "AI"
+        },
+        {
+          "command": "extension.switchModel",
+          "title": "Switch AI Model",
+          "category": "AI"
+        },
+        {
+          "command": "extension.viewGraph",
+          "title": "View Knowledge Graph",
+          "category": "AI"
+        }
+      ],
+      "views": {
+        "explorer": [
+          {
+            "id": "overdrive-agent",
+            "name": "OverDrive Agent",
+            "type": "webview"
+          }
+        ]
+      }
+    }
+  },
+  "how-to-add-to-vs-code": [
+    "1. Open VS Code User Settings (Ctrl+,)",
+    "2. Search for 'MCP'",
+    "3. In settings.json, add the copilot.advanced.mcpServers section",
+    "4. Replace /path/to/ with absolute path to OBD-intnero folder",
+    "5. Reload VS Code",
+    "6. Open Copilot panel, it will show @overdrive-agent available"
+  ]
+}

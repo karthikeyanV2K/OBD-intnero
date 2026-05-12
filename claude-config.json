@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "overdrive-agent": {
+      "command": "node",
+      "args": ["/path/to/OBD-intnero/mcp-server.js"],
+      "disabled": false,
+      "autoApprove": ["ask_agent", "query_graph", "get_session_context", "get_model_stats"],
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "DEFAULT_MODEL": "claude-sonnet-4-6"
+      }
+    }
+  }
+}

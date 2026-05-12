@@ -1,0 +1,33 @@
+{
+  "name": "overdrive-ai-agent",
+  "version": "1.0.0",
+  "description": "AI coding agent with persistent knowledge graph via OverdriveDB",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "server": "node server.js",
+    "mcp": "node mcp-server.js",
+    "mcp-dev": "NODE_ENV=development node mcp-server.js",
+    "worker": "node -e \"const {initAllEngines,getEngines}=require('./agent-db');const {startWorker}=require('./task-worker');(async()=>{await initAllEngines();await startWorker(0);})()\"",
+    "dev": "concurrently \"npm run mcp\" \"npm run server\" \"npm run worker\"",
+    "test": "node -e \"console.log('Tests would run here')\""
+  },
+  "keywords": ["ai", "agent", "database", "overdrive", "vscode", "extension"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "overdrive-db": "^2.3.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.0.0",
+    "express": "^4.18.0",
+    "cors": "^2.8.0",
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

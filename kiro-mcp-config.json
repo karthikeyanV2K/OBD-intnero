@@ -1,0 +1,56 @@
+{
+  "kiro-ide-mcp-integration": {
+    "description": "Kiro IDE MCP configuration for OverdriveDB AI Agent",
+    "configuration": {
+      "mcp": {
+        "servers": {
+          "overdrive-agent": {
+            "command": "node",
+            "args": ["/path/to/OBD-intnero/mcp-server.js"],
+            "disabled": false,
+            "env": {
+              "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+              "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+              "NODE_ENV": "production"
+            }
+          }
+        }
+      },
+      "editor": {
+        "ai": {
+          "providers": ["overdrive-agent"],
+          "defaultModel": "claude-sonnet-4-6"
+        }
+      }
+    },
+    "how-to-setup": [
+      "1. Locate Kiro IDE settings file (usually in .kiro/settings.json or kiro-config.json)",
+      "2. Add the 'mcp' section from above to your Kiro settings",
+      "3. Replace /path/to/ with the absolute path to your OBD-intnero folder",
+      "4. Set environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY)",
+      "5. Restart Kiro IDE",
+      "6. When you type, the AI provider dropdown should show 'overdrive-agent'"
+    ],
+    "keyboard-shortcuts": {
+      "ask-agent": "Ctrl+Shift+A (or Cmd+Shift+A on Mac)",
+      "switch-model": "Ctrl+Shift+M",
+      "view-graph": "Ctrl+Shift+G"
+    },
+    "commands": {
+      "Ask Agent": "@overdrive-agent ask_agent 'your task here'",
+      "Query Graph": "@overdrive-agent query_graph node_type=CodeBlock filter={'language':'javascript'}",
+      "Switch Model": "@overdrive-agent switch_model new_model=gpt-4o current_task_id=task_123",
+      "Session Context": "@overdrive-agent get_session_context include_recent_tasks=true"
+    }
+  },
+  "troubleshooting": {
+    "issue": "Kiro says 'Provider not found'",
+    "solutions": [
+      "1. Verify node.js is installed and in PATH",
+      "2. Check MCP server is running (npm run mcp)",
+      "3. Verify path in config is absolute, not relative",
+      "4. Check ANTHROPIC_API_KEY env var is set",
+      "5. View Kiro debug logs for MCP connection errors"
+    ]
+  }
+}
