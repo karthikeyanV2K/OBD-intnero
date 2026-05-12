@@ -1,0 +1,81 @@
+# Dependencies - already bundled
+node_modules/
+package-lock.json
+
+# Testing
+test/
+tests/
+*.test.js
+jest.config.js
+.jest/
+
+# Development
+.env
+.env.local
+.env.*.local
+.editorconfig
+.eslintrc*
+.prettierrc*
+.gitignore
+.git/
+.gitattributes
+
+# Build/Cache
+dist/
+build/
+.next/
+.nuxt/
+.cache/
+.vuepress/dist/
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+.sublime-*
+
+# Documentation (except README and core docs)
+docs/
+docs_old/
+*.bak
+CHANGELOG_OLD.md
+
+# Examples
+examples/
+sample/
+demo/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+.travis.yml
+
+# Project-specific
+project-a/
+project-b/
+project-c/
+project-d/
+agent-graph.odb
+agent-graph-*.odb
+test-imports.js
+
+# Keep these:
+# ✓ package.json
+# ✓ README.md
+# ✓ LICENSE
+# ✓ bin/overdrive
+# ✓ lib/cli/
+# ✓ mcp-server.js
+# ✓ server.js
+# ✓ agent-db.js
+# ✓ All core JS files
+# ✓ .npmignore
+# ✓ Documentation MD files

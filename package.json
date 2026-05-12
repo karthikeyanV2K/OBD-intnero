@@ -1,8 +1,13 @@
 {
   "name": "overdrive-ai-agent",
   "version": "1.0.0",
-  "description": "AI coding agent with persistent knowledge graph via OverdriveDB",
+  "description": "Unified AI coding agent with MCP integration for Claude, VS Code, and Kiro IDE. Features persistent knowledge graph via OverdriveDB, token compression (60-80%), multi-model switching, and shared/independent project modes.",
   "main": "server.js",
+  "bin": {
+    "overdrive": "./bin/overdrive"
+  },
+  "type": "commonjs",
+  "preferGlobal": true,
   "scripts": {
     "start": "node server.js",
     "server": "node server.js",
@@ -10,11 +15,42 @@
     "mcp-dev": "NODE_ENV=development node mcp-server.js",
     "worker": "node -e \"const {initAllEngines,getEngines}=require('./agent-db');const {startWorker}=require('./task-worker');(async()=>{await initAllEngines();await startWorker(0);})()\"",
     "dev": "concurrently \"npm run mcp\" \"npm run server\" \"npm run worker\"",
-    "test": "node -e \"console.log('Tests would run here')\""
+    "cli": "node bin/overdrive",
+    "test": "node -e \"console.log('Tests would run here')\"",
+    "prepare": "npm run build",
+    "build": "echo 'Build complete'"
   },
-  "keywords": ["ai", "agent", "database", "overdrive", "vscode", "extension"],
-  "author": "",
+  "keywords": [
+    "ai",
+    "agent",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "vs-code",
+    "copilot",
+    "kiro-ide",
+    "overdrive-db",
+    "knowledge-graph",
+    "code-generation",
+    "multi-model",
+    "token-compression",
+    "gpt-4",
+    "anthropic"
+  ],
+  "author": {
+    "name": "Your Name",
+    "email": "your.email@example.com",
+    "url": "https://github.com/yourusername"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/overdrive-ai-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/overdrive-ai-agent/issues"
+  },
+  "homepage": "https://github.com/yourusername/overdrive-ai-agent#readme",
   "dependencies": {
     "overdrive-db": "^2.3.0",
     "@anthropic-ai/sdk": "^0.39.0",
@@ -28,6 +64,20 @@
     "typescript": "^5.0.0"
   },
   "engines": {
-    "node": ">=16.0.0"
-  }
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "mcp-server.js",
+    "server.js",
+    "agent-db.js",
+    "knowledge.js",
+    "prompt-builder.js",
+    "model-router.js",
+    "task-worker.js",
+    ".env.example",
+    "*.md"
+  ]
 }
