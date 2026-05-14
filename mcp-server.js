@@ -22,10 +22,17 @@ const { submitTask, getTaskStatus } = require('./task-worker');
 // MCP Server setup
 // ─────────────────────────────────────────────
 
-const server = new Server({
-  name: 'OverdriveDB AI Agent',
-  version: '1.0.0',
-});
+const server = new Server(
+  {
+    name: 'OverdriveDB AI Agent',
+    version: '1.0.0',
+  },
+  {
+    capabilities: {
+      tools: {}
+    }
+  }
+);
 
 let engineInitialized = false;
 
@@ -284,8 +291,9 @@ async function handleToolCall(name, args) {
     case 'get_session_context': {
       const { include_recent_tasks = true } = args;
       try {
-        const session = ramDb.read('_session') || {};
-        const recentTasks = include_recent_tasks ? graphDb.query({ type: 'Task', limit: 5 }) : [];
+        const sessionRes = ramDb.query('SELECT * FROM session ORDER BY ts DESC LIMIT 1');
+        const session = sessionRes.length > 0 ? sessionRes[0] : {};
+        const recentTasks = include_recent_tasks ? graphDb.listNodes('Task').slice(-5) : [];
         return {
           content: [
             {

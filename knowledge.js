@@ -173,6 +173,68 @@ async function embedText(text) {
   return new Array(384).fill(0).map(() => Math.random()); // placeholder
 }
 
+// ─────────────────────────────────────────────
+// EXPORT: Export the full graph for visualization
+// ─────────────────────────────────────────────
+
+function exportFullGraph() {
+  const { graphDb, diskDb } = getEngines();
+  
+  let tasks = [];
+  try {
+    tasks = diskDb.query('SELECT task_id FROM solutions');
+  } catch(e) {}
+
+  const uniqueNodes = new Map();
+  const uniqueEdges = new Map();
+
+  tasks.forEach(t => {
+    if(!t.task_id) return;
+    try {
+      const traverseNodes = graphDb.graphTraverse(t.task_id, 3);
+      traverseNodes.forEach(node => {
+        if(!uniqueNodes.has(node.id)) {
+            let color = '#66fcf1'; // Task
+            if(node.type === 'Reasoning') color = '#f2a900';
+            if(node.type === 'CodeBlock') color = '#c5c6c7';
+            
+            uniqueNodes.set(node.id, {
+                id: node.id,
+                label: `${node.type}\n${(node.props.description || node.props.summary || node.props.signature || '').substring(0, 20)}...`,
+                color: color,
+                props: node.props
+            });
+        }
+        
+        if (node.edges) {
+            node.edges.forEach(edge => {
+                const edgeId = `${edge.from}_${edge.to}`;
+                uniqueEdges.set(edgeId, {
+                    from: edge.from,
+                    to: edge.to,
+                    label: edge.type
+                });
+            });
+        }
+      });
+    } catch(e) {}
+  });
+
+  // Mock data if empty for demonstration
+  if(uniqueNodes.size === 0) {
+      uniqueNodes.set('n1', { id: 'n1', label: 'Task\nBuild Dashboard', color: '#66fcf1', props: { description: 'Build dashboard for ODB' } });
+      uniqueNodes.set('n2', { id: 'n2', label: 'Reasoning\nAnalyzed', color: '#f2a900', props: { summary: 'Analyzed requirement' } });
+      uniqueNodes.set('n3', { id: 'n3', label: 'CodeBlock\nHTML/JS', color: '#c5c6c7', props: { signature: 'index.html' } });
+      uniqueEdges.set('e1', { from: 'n1', to: 'n2', label: 'SOLVED_BY' });
+      uniqueEdges.set('e2', { from: 'n2', to: 'n3', label: 'PRODUCED' });
+  }
+
+  return {
+    nodes: Array.from(uniqueNodes.values()),
+    edges: Array.from(uniqueEdges.values())
+  };
+}
+
 module.exports = {
   storeAgentTurn,
   loadCompressedContext,
@@ -182,4 +244,5 @@ module.exports = {
   extractKeyword,
   embedText,
   estimateTokens,
+  exportFullGraph,
 };

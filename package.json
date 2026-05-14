@@ -1,16 +1,17 @@
 {
-  "name": "overdrive-ai-agent",
-  "version": "1.0.0",
+  "name": "odb-echograph",
+  "version": "1.0.8",
   "description": "Unified AI coding agent with MCP integration for Claude, VS Code, and Kiro IDE. Features persistent knowledge graph via OverdriveDB, token compression (60-80%), multi-model switching, and shared/independent project modes.",
   "main": "server.js",
   "bin": {
-    "overdrive": "./bin/overdrive"
+    "odb-dashboard": "bin/odb-dashboard.js"
   },
   "type": "commonjs",
   "preferGlobal": true,
   "scripts": {
     "start": "node server.js",
     "server": "node server.js",
+    "dashboard": "node server.js",
     "mcp": "node mcp-server.js",
     "mcp-dev": "NODE_ENV=development node mcp-server.js",
     "worker": "node -e \"const {initAllEngines,getEngines}=require('./agent-db');const {startWorker}=require('./task-worker');(async()=>{await initAllEngines();await startWorker(0);})()\"",
@@ -38,26 +39,27 @@
     "anthropic"
   ],
   "author": {
-    "name": "Your Name",
+    "name": "AFOT (All For One Tech)",
     "email": "your.email@example.com",
     "url": "https://github.com/yourusername"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/overdrive-ai-agent.git"
+    "url": "https://github.com/all_for_one_tech/odb-echograph.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/overdrive-ai-agent/issues"
+    "url": "https://github.com/all_for_one_tech/odb-echograph/issues"
   },
-  "homepage": "https://github.com/yourusername/overdrive-ai-agent#readme",
+  "homepage": "https://github.com/all_for_one_tech/odb-echograph#readme",
   "dependencies": {
-    "overdrive-db": "^2.3.0",
     "@anthropic-ai/sdk": "^0.39.0",
-    "openai": "^4.0.0",
-    "express": "^4.18.0",
+    "@modelcontextprotocol/sdk": "^0.5.0",
     "cors": "^2.8.0",
-    "@modelcontextprotocol/sdk": "^0.5.0"
+    "express": "^4.18.0",
+    "odb-echograph": "^1.0.2",
+    "openai": "^4.0.0",
+    "overdrive-db": "^2.4.6"
   },
   "devDependencies": {
     "concurrently": "^8.0.0",
@@ -78,6 +80,6 @@
     "model-router.js",
     "task-worker.js",
     ".env.example",
-    "*.md"
+    "public/"
   ]
 }

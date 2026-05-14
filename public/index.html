@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ODB-Echograph Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar glass-panel">
+            <div class="logo">
+                <h1>ODB <span>Echograph</span></h1>
+                <p class="tagline">by AFOT (mr.v2k)</p>
+            </div>
+            
+            <div class="panel-section">
+                <h2>Session Info</h2>
+                <form id="session-form">
+                    <div class="input-group">
+                        <label>User / Project ID</label>
+                        <input type="text" id="username" placeholder="e.g., karthikeyanV2K" />
+                    </div>
+                    <div class="input-group">
+                        <label>Active Model</label>
+                        <select id="activeModel">
+                            <option value="claude-sonnet-4-6">Claude 4.6 Sonnet</option>
+                            <option value="claude-opus-4-6">Claude 4.6 Opus</option>
+                            <option value="gpt-4o">GPT-4o</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Memory Limit (MB)</label>
+                        <input type="number" id="memoryLimit" value="64" />
+                    </div>
+                    <button type="submit" class="glow-btn">Update Session</button>
+                </form>
+            </div>
+
+            <div class="panel-section stats-section">
+                <h2>Graph Stats</h2>
+                <div class="stat-box">
+                    <span class="stat-label">Total Nodes</span>
+                    <span class="stat-value" id="nodeCount">0</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Relationships</span>
+                    <span class="stat-value" id="edgeCount">0</span>
+                </div>
+            </div>
+            
+            <div id="toast" class="toast hidden">Session Updated!</div>
+        </aside>
+
+        <!-- Main Graph Area -->
+        <main class="graph-container glass-panel">
+            <div id="graph-header">
+                <h2>Knowledge Graph Visualization</h2>
+                <button id="refresh-btn" class="icon-btn">🔄 Refresh Graph</button>
+            </div>
+            <div id="mynetwork"></div>
+            
+            <!-- Details Popup -->
+            <div id="node-details" class="glass-panel hidden">
+                <h3 id="detail-title">Node Details</h3>
+                <pre id="detail-content">Select a node...</pre>
+                <button id="close-details">Close</button>
+            </div>
+        </main>
+    </div>
+    
+    <script src="js/app.js"></script>
+</body>
+</html>

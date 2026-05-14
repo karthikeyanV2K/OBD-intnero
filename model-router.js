@@ -45,9 +45,9 @@ async function routeTask(taskDesc, modelName) {
 
   // 2. Log what reference was resolved (visible in server logs / VS Code Output panel)
   if (meta.referenceResolved) {
-    console.log(`[router] Reference resolved: "${meta.referenceResolved}"`);
+    console.error(`[router] Reference resolved: "${meta.referenceResolved}"`);
   }
-  console.log(`[router] System prompt: ~${meta.systemTokens} tokens  |  model: ${modelName}`);
+  console.error(`[router] System prompt: ~${meta.systemTokens} tokens  |  model: ${modelName}`);
 
   // 3. Call the selected model with structured { system, user } prompt
   const result = await adapter(system, user, modelName);
@@ -127,7 +127,7 @@ async function switchModel(currentTaskId, newModel) {
     ts: Date.now(),
   });
 
-  console.log(`[router] Switched to ${newModel}. Context compressed to ~${JSON.stringify(ctx).length} chars`);
+  console.error(`[router] Switched to ${newModel}. Context compressed to ~${JSON.stringify(ctx).length} chars`);
 
   // Return snapshot handle so caller can restore if needed
   return { snapshot, compressedContext: ctx };

@@ -21,6 +21,18 @@
 const { getEngines } = require('./agent-db');
 const { loadCompressedContext, findPatterns, extractKeyword, estimateTokens } = require('./knowledge');
 
+function queryNodes(graphDb, type, options = {}) {
+  let nodes = graphDb.listNodes(type).map(n => ({ id: n._id || n.id || n.taskId || n.reasoningId || n.codeId || 'unknown', props: n }));
+  if (options.filter) nodes = nodes.filter(options.filter);
+  if (options.orderBy) nodes = nodes.sort((a, b) => {
+    let va = a.props[options.orderBy] || 0;
+    let vb = b.props[options.orderBy] || 0;
+    return options.desc ? vb - va : va - vb;
+  });
+  if (options.limit) nodes = nodes.slice(0, options.limit);
+  return nodes;
+}
+
 // ─────────────────────────────────────────────
 // Reference signal words
 // When user says any of these → reference resolution kicks in
@@ -86,7 +98,7 @@ async function resolveReference(userInput) {
   const lower = userInput.toLowerCase();
 
   if (/\b(bug|error|issue|problem|exception|crash)\b/.test(lower)) {
-    const errorNodes = graphDb.queryNodes('Task', {
+    const errorNodes = queryNodes(graphDb, 'Task', {
       filter: n => n.props.status === 'error' || n.props.description?.toLowerCase().includes('error'),
       limit: 3,
       orderBy: 'created_at',
@@ -102,7 +114,7 @@ async function resolveReference(userInput) {
   }
 
   if (/\b(function|method|fn|func)\b/.test(lower)) {
-    const codeNodes = graphDb.queryNodes('CodeBlock', {
+    const codeNodes = queryNodes(graphDb, 'CodeBlock', {
       limit: 3,
       orderBy: 'created_at',
       desc: true,
@@ -117,7 +129,7 @@ async function resolveReference(userInput) {
   }
 
   if (/\b(file|module|component|class)\b/.test(lower)) {
-    const codeNodes = graphDb.queryNodes('CodeBlock', {
+    const codeNodes = queryNodes(graphDb, 'CodeBlock', {
       filter: n => n.props.file != null,
       limit: 3,
       orderBy: 'created_at',
@@ -201,7 +213,7 @@ When the user refers to "that", "this", "it", or "the previous", you know exactl
   }
 
   // ── Section 4: Recent graph history — last 3 tasks (~150 tokens) ──
-  const recentTasks = graphDb.queryNodes('Task', {
+  const recentTasks = queryNodes(graphDb, 'Task', {
     limit: 3,
     orderBy: 'created_at',
     desc: true,
@@ -364,13 +376,5 @@ async function assemblePrompt(userInput, options = {}) {
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
-
-function estimateTokens(text) {
-  return Math.ceil((text || '').length / 4);
-}
-
-function extractKeyword(text) {
-  return text.split(' ').filter(w => w.length > 3).slice(0, 3).join(' ');
-}
 
 module.exports = { assemblePrompt, buildSystemPrompt, resolveReference, hasReference };

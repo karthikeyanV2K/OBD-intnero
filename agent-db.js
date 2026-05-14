@@ -30,24 +30,23 @@ async function initAllEngines() {
 
   // 2. VECTOR — code embeddings for semantic search
   vectorDb = OverdriveDb.open('agent-vectors.odb', { engine: 'Vector' });
-  vectorDb.createVectorIndex('code_embeddings', { dimensions: 384 });
-  vectorDb.createVectorIndex('task_embeddings', { dimensions: 384 });
+  vectorDb.createVectorIndex('code_embeddings', 384);
+  vectorDb.createVectorIndex('task_embeddings', 384);
 
   // 3. TIMESERIES — token usage + model performance metrics
   tsDb = OverdriveDb.open('agent-metrics.odb', { engine: 'TimeSeries' });
-  tsDb.createTimeseries('token_usage',   { retentionDays: 90 });
-  tsDb.createTimeseries('latency_ms',    { retentionDays: 90 });
-  tsDb.createTimeseries('quality_score', { retentionDays: 90 });
+  tsDb.createTimeseries('token_usage',   90 * 24 * 3600); // 90 days in seconds
+  tsDb.createTimeseries('latency_ms',    90 * 24 * 3600);
+  tsDb.createTimeseries('quality_score', 90 * 24 * 3600);
 
   // 4. STREAMING — task queue and agent event bus
   streamDb = OverdriveDb.open('agent-stream.odb', { engine: 'Streaming' });
-  streamDb.createTopic('task_queue',    { partitions: 4 });
-  streamDb.createTopic('agent_events',  { partitions: 2 });
-  streamDb.createTopic('model_results', { partitions: 4 });
+  streamDb.createTopic('task_queue',    4); // 4 partitions
+  streamDb.createTopic('agent_events',  2); // 2 partitions
+  streamDb.createTopic('model_results', 4); // 4 partitions
 
   // 5. RAM — current session (fast reads, snapshot/restore on model switch)
   ramDb = OverdriveDb.open('agent-session.odb', { engine: 'RAM' });
-  ramDb.setMemoryLimit(64 * 1024 * 1024); // 64 MB cap
   ramDb.createTable('session');
   ramDb.createTable('context_cache');
 
@@ -56,8 +55,6 @@ async function initAllEngines() {
   diskDb.createTable('patterns');   // known code patterns
   diskDb.createTable('solutions');  // successful solutions archive
   diskDb.createTable('models');     // model config + capabilities
-
-  console.log('[agent-db] All 6 engines initialized');
 }
 
 function getEngines() {

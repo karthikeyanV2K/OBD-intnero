@@ -12,10 +12,12 @@ const cors    = require('cors');
 const { initAllEngines } = require('./agent-db');
 const { routeTask, switchModel, getModelStats } = require('./model-router');
 const { submitTask } = require('./task-worker');
+const { exportFullGraph } = require('./knowledge');
 
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: ['chrome-extension://*', 'http://localhost:*'] }));
+app.use(express.static('public'));
 
 let initialized = false;
 
@@ -95,6 +97,27 @@ app.get('/metrics/:model', async (req, res) => {
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, initialized, ts: Date.now() });
+});
+
+// ─────────────────────────────────────────────
+// GET /api/graph — Export graph for UI
+// ─────────────────────────────────────────────
+app.get('/api/graph', async (req, res) => {
+  await ensureInit();
+  const graphData = exportFullGraph();
+  res.json(graphData);
+});
+
+// ─────────────────────────────────────────────
+// GET & POST /api/session — UI settings
+// ─────────────────────────────────────────────
+let uiSession = { username: 'karthikeyanV2K', model: 'claude-sonnet-4-6', memoryLimit: 64 };
+app.get('/api/session', (req, res) => {
+  res.json(uiSession);
+});
+app.post('/api/session', (req, res) => {
+  uiSession = { ...uiSession, ...req.body };
+  res.json({ success: true, session: uiSession });
 });
 
 app.listen(3001, () => {
