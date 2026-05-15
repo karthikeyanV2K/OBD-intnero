@@ -1,0 +1,14 @@
+{
+  "code_embeddings": {
+    "name": "code_embeddings",
+    "dim": 384,
+    "metric": "cosine",
+    "count": 0
+  },
+  "task_embeddings": {
+    "name": "task_embeddings",
+    "dim": 384,
+    "metric": "cosine",
+    "count": 0
+  }
+}

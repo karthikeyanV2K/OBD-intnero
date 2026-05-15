@@ -1,6 +1,6 @@
 {
   "name": "odb-echograph",
-  "version": "1.0.8",
+  "version": "1.0.16",
   "description": "Unified AI coding agent with MCP integration for Claude, VS Code, and Kiro IDE. Features persistent knowledge graph via OverdriveDB, token compression (60-80%), multi-model switching, and shared/independent project modes.",
   "main": "server.js",
   "bin": {

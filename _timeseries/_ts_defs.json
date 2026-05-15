@@ -1,0 +1,23 @@
+{
+  "quality_score": {
+    "name": "quality_score",
+    "fields": [],
+    "tag_fields": [],
+    "ttl_seconds": 7776000,
+    "created_at": 1778790103
+  },
+  "latency_ms": {
+    "name": "latency_ms",
+    "fields": [],
+    "tag_fields": [],
+    "ttl_seconds": 7776000,
+    "created_at": 1778790103
+  },
+  "token_usage": {
+    "name": "token_usage",
+    "fields": [],
+    "tag_fields": [],
+    "ttl_seconds": 7776000,
+    "created_at": 1778790103
+  }
+}

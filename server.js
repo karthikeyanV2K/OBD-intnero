@@ -1,127 +1,215 @@
 /**
  * server.js
- * Lightweight Express API — bridges Chrome extension to the OverdriveDB agent.
- * Run: node server.js   (on localhost:3001)
+ * Lightweight Express API + static dashboard server.
  *
- * The VS Code extension calls the agent directly in Node.js (same process).
- * The Chrome extension needs this HTTP bridge since it can't run native Node.
+ * Run: node server.js   OR   odb-dashboard
+ *
+ * Auto-picks a free port starting at 3742.
+ * Binds to 127.0.0.1 only (local machine, not exposed to network).
+ * External REST endpoints for any IDE/script/extension to push tasks.
  */
 
 const express = require('express');
 const cors    = require('cors');
-const { initAllEngines } = require('./agent-db');
-const { routeTask, switchModel, getModelStats } = require('./model-router');
-const { submitTask } = require('./task-worker');
-const { exportFullGraph } = require('./knowledge');
+const http    = require('http');
+const path    = require('path');
+const { initAllEngines, getEngines, categorizeTask } = require('./agent-db');
+const {
+  exportFullGraph, getFeatures, getConfirmedStyles,
+  getSecurityAudit, getModelHeatmap, getGhostTasks,
+  storeFeature, storeCodeStyle, storeSecurityRule,
+} = require('./knowledge');
+
+const IDE_SOURCE = process.env.OVERDRIVE_IDE || 'Antigravity'; // default to Antigravity for dashboard
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: ['chrome-extension://*', 'http://localhost:*'] }));
-app.use(express.static('public'));
+app.use(cors({ origin: ['chrome-extension://*', 'http://localhost:*', 'http://127.0.0.1:*'] }));
+// Absolute path so server works regardless of cwd
+app.use(express.static(path.join(__dirname, 'public')));
 
 let initialized = false;
 
-// ─────────────────────────────────────────────
-// Lazy init — engines start on first request
-// ─────────────────────────────────────────────
-
 async function ensureInit() {
-  if (!initialized) {
+  // Re-open if idle-timer closed the handles
+  const { graphDb } = getEngines();
+  if (!initialized || !graphDb) {
     await initAllEngines();
     initialized = true;
   }
 }
 
 // ─────────────────────────────────────────────
-// POST /task — run a task through the agent
+// /api/graph — read all graph nodes (for dashboard)
 // ─────────────────────────────────────────────
 
-app.post('/task', async (req, res) => {
-  await ensureInit();
-  const { task, model = 'claude-sonnet-4-6' } = req.body;
-  if (!task) return res.status(400).json({ error: 'task required' });
-
-  try {
-    const result = await routeTask(task, model);
-    res.json({ result, model, ts: Date.now() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─────────────────────────────────────────────
-// POST /task/async — push to Streaming queue
-// Returns immediately, result comes via WebSocket
-// ─────────────────────────────────────────────
-
-app.post('/task/async', async (req, res) => {
-  await ensureInit();
-  const { task, model = 'claude-sonnet-4-6' } = req.body;
-  if (!task) return res.status(400).json({ error: 'task required' });
-
-  const taskId = `task_${Date.now()}`;
-  submitTask(task, model);
-  res.json({ taskId, queued: true });
-});
-
-// ─────────────────────────────────────────────
-// POST /switch-model — swap model, graph handoff
-// ─────────────────────────────────────────────
-
-app.post('/switch-model', async (req, res) => {
-  await ensureInit();
-  const { model, taskId } = req.body;
-  if (!model) return res.status(400).json({ error: 'model required' });
-
-  try {
-    await switchModel(taskId || null, model);
-    res.json({ switched: true, model });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─────────────────────────────────────────────
-// GET /metrics — TimeSeries stats for a model
-// ─────────────────────────────────────────────
-
-app.get('/metrics/:model', async (req, res) => {
-  await ensureInit();
-  const stats = getModelStats(req.params.model, 24);
-  res.json(stats);
-});
-
-// ─────────────────────────────────────────────
-// GET /health
-// ─────────────────────────────────────────────
-
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, initialized, ts: Date.now() });
-});
-
-// ─────────────────────────────────────────────
-// GET /api/graph — Export graph for UI
-// ─────────────────────────────────────────────
 app.get('/api/graph', async (req, res) => {
   await ensureInit();
-  const graphData = exportFullGraph();
-  res.json(graphData);
+  try {
+    const data = exportFullGraph();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────
-// GET & POST /api/session — UI settings
+// /api/tasks — all Task nodes as flat list (for dashboard table)
 // ─────────────────────────────────────────────
-let uiSession = { username: 'karthikeyanV2K', model: 'claude-sonnet-4-6', memoryLimit: 64 };
-app.get('/api/session', (req, res) => {
-  res.json(uiSession);
-});
-app.post('/api/session', (req, res) => {
-  uiSession = { ...uiSession, ...req.body };
-  res.json({ success: true, session: uiSession });
+
+app.get('/api/tasks', async (req, res) => {
+  await ensureInit();
+  const { graphDb } = getEngines();
+  try {
+    const tasks = graphDb.listNodes('Task').map(n => {
+      const p = n.properties || n.props || n;
+      return {
+        id:          n.id || n._id,
+        description: p.description || p.task || '—',
+        model:       p.model       || '—',
+        ide:         p.ide         || 'Unknown',
+        status:      p.status      || 'unknown',
+        reasoning:   p.reasoning   || '',
+        ts:          p.ts          || p.created_at || 0,
+      };
+    }).sort((a, b) => b.ts - a.ts); // newest first
+
+    res.json({ tasks, total: tasks.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message, tasks: [] });
+  }
 });
 
-app.listen(3001, () => {
-  console.log('[server] Agent API running on http://localhost:3001');
+// ─────────────────────────────────────────────
+// /api/external/task — POST from any external source
+// Stamps ide: "External API" automatically
+// ─────────────────────────────────────────────
+
+app.post('/api/external/task', async (req, res) => {
+  await ensureInit();
+  const { graphDb } = getEngines();
+  const { task, model, reasoning, status, code } = req.body;
+
+  if (!task) return res.status(400).json({ error: 'task field required' });
+
+  try {
+    const nodeId = graphDb.createNode('Task', {
+      description: task,
+      model:       model || 'external',
+      ide:         'External API',
+      status:      status || 'completed',
+      reasoning:   (reasoning || '').substring(0, 200),
+      code:        (code || '').substring(0, 400),
+      ts:          Date.now(),
+    });
+    res.json({ ok: true, node_id: nodeId, ide: 'External API' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-module.exports = app;
+// ─────────────────────────────────────────────
+// /api/external/graph — read all nodes (external consumers)
+// ─────────────────────────────────────────────
+
+app.get('/api/external/graph', async (req, res) => {
+  await ensureInit();
+  try {
+    const data = exportFullGraph();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// /api/external/search — keyword search across CodeBlocks
+// ─────────────────────────────────────────────
+
+app.get('/api/external/search', async (req, res) => {
+  await ensureInit();
+  const { graphDb } = getEngines();
+  const q = (req.query.q || '').toLowerCase();
+  if (!q) return res.status(400).json({ error: 'q param required' });
+
+  try {
+    const all = graphDb.listNodes('Task');
+    const results = all.filter(n => {
+      const p = n.properties || n.props || n;
+      return (p.description || '').toLowerCase().includes(q) ||
+             (p.reasoning   || '').toLowerCase().includes(q) ||
+             (p.code        || '').toLowerCase().includes(q);
+    }).slice(0, 20);
+    res.json({ results, query: q });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// /api/features — roadmap items with dead-feature detection
+app.get('/api/features', async (req, res) => {
+  await ensureInit();
+  try { res.json({ features: getFeatures() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// /api/styles — learned code style patterns by confidence
+app.get('/api/styles', async (req, res) => {
+  await ensureInit();
+  try { res.json({ styles: getConfirmedStyles(0) }); }  // return all
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// /api/heatmap — IDE+model performance heatmap
+app.get('/api/heatmap', async (req, res) => {
+  await ensureInit();
+  try { res.json({ heatmap: getModelHeatmap() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// /api/security-audit — applied vs missing security rules
+app.get('/api/security-audit', async (req, res) => {
+  await ensureInit();
+  try { res.json(getSecurityAudit()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// /api/ghosts — unfinished tasks (pending > 30min)
+app.get('/api/ghosts', async (req, res) => {
+  await ensureInit();
+  try { res.json({ ghosts: getGhostTasks() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─────────────────────────────────────────────
+// Auto-port scan — no more EADDRINUSE crashes
+// ─────────────────────────────────────────────
+
+function findFreePort(startPort) {
+  return new Promise((resolve) => {
+    const probe = http.createServer();
+    probe.listen(startPort, '127.0.0.1', () => {
+      probe.close(() => resolve(startPort));
+    });
+    probe.on('error', () => resolve(findFreePort(startPort + 1)));
+  });
+}
+
+async function startServer() {
+  const port = await findFreePort(3742);
+  app.listen(port, '127.0.0.1', () => {
+    console.log(`[server] Dashboard: http://localhost:${port}`);
+    console.log(`[server] External API: POST http://localhost:${port}/api/external/task`);
+  });
+  return port;
+}
+
+// Start when run directly
+if (require.main === module) {
+  startServer().catch(err => {
+    console.error('[server] Fatal:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { startServer, app };

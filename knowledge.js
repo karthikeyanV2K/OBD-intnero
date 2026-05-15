@@ -1,136 +1,484 @@
 /**
- * knowledge.js
- * All graph + vector operations for the AI agent.
+ * knowledge.js  —  Graph intelligence layer for Overdrive AI Agent v1.0.13
  *
- * Graph engine  → relationships between tasks, reasoning, code
- * Vector engine → semantic search across past code and tasks
+ * Features:
+ *   - Compressed context assembly (~410 tokens flat regardless of session length)
+ *   - Confidence scoring on learned code style patterns
+ *   - Ghost task detection (pending > 30min)
+ *   - Cross-session continuity ("last session you were working on X")
+ *   - Model performance heatmap data
+ *   - Contradiction detection for style rules
+ *   - Security audit
+ *   - Smart reference resolution
  */
 
-const { getEngines } = require('./agent-db');
+const { getEngines, categorizeTask } = require('./agent-db');
 
 // ─────────────────────────────────────────────
-// WRITE: Store a completed agent turn to the graph
+// WRITE: Store a completed agent turn
 // ─────────────────────────────────────────────
 
-async function storeAgentTurn({ taskDesc, model, reasoningChain, codeOutput, embedding }) {
-  const { graphDb, vectorDb, diskDb } = getEngines();
+async function storeAgentTurn({ taskDesc, model, ide, reasoningChain, codeOutput }) {
+  const { graphDb, diskDb } = getEngines();
+  const IDE = ide || process.env.OVERDRIVE_IDE || 'Unknown';
 
   try {
-    // 1. Task node
+    const category = categorizeTask(taskDesc);
+
     const taskId = graphDb.createNode('Task', {
       description: taskDesc,
-      status: 'completed',
+      status:      'completed',
       model,
-      created_at: Date.now(),
+      ide:         IDE,
+      category,
+      created_at:  Date.now(),
     });
 
-    // 2. Reasoning node — only store the SUMMARY, not full chain
     const reasoningId = graphDb.createNode('Reasoning', {
-      chain: reasoningChain,
-      summary: summarizeChain(reasoningChain),
+      summary:     summarizeChain(reasoningChain).substring(0, 200),
       model,
+      ide:         IDE,
       tokens_used: estimateTokens(reasoningChain),
+      created_at:  Date.now(),
     });
 
-    // 3. Code node — store signature only (not full body)
     const codeId = graphDb.createNode('CodeBlock', {
-      signature: extractSignature(codeOutput),
-      language: detectLanguage(codeOutput),
-      file: codeOutput.file || null,
-      quality_score: 1.0,
+      signature:   extractSignature(codeOutput),
+      language:    detectLanguage(codeOutput),
+      file:        codeOutput.file || null,
+      ide:         IDE,
+      created_at:  Date.now(),
     });
 
-    // 4. Connect them
-    graphDb.createEdge('SOLVED_BY', taskId, reasoningId);
-    graphDb.createEdge('PRODUCED',  reasoningId, codeId);
+    try { graphDb.createEdge('SOLVED_BY', taskId, reasoningId); } catch (_) {}
+    try { graphDb.createEdge('PRODUCED',  reasoningId, codeId); } catch (_) {}
 
-    // 5. Store code embedding in Vector engine
-    if (embedding) {
-      vectorDb.insertVector('code_embeddings', codeId, embedding);
-    }
-
-    // 6. Archive to Disk for long-term persistence
-    diskDb.insert('solutions', {
-      task_id: taskId,
-      task: taskDesc,
-      model,
-      code_signature: extractSignature(codeOutput),
-      created_at: Date.now(),
-    });
+    // Archive to Disk
+    try {
+      diskDb.insert('solutions', {
+        task_id:        taskId,
+        task:           taskDesc,
+        model,
+        ide:            IDE,
+        category,
+        code_signature: extractSignature(codeOutput),
+        created_at:     Date.now(),
+      });
+    } catch (_) {}
 
     return { taskId, reasoningId, codeId };
   } catch (err) {
-    console.error('[storeAgentTurn] Error:', err.message);
+    console.error('[storeAgentTurn]', err.message);
     throw err;
   }
 }
 
 // ─────────────────────────────────────────────
-// READ: Load compressed context for a new model
-// This is the TOKEN REDUCTION core.
-// Instead of 10,000 tokens of chat history →
-// returns ~400-600 tokens of structured context.
+// WRITE: Store / update a code style pattern
+// Confidence increases each time the same pattern is observed
+// ─────────────────────────────────────────────
+
+function storeCodeStyle({ pattern, language, example, ide }) {
+  const { graphDb } = getEngines();
+  const IDE = ide || process.env.OVERDRIVE_IDE || 'Unknown';
+
+  try {
+    // Check if pattern already exists
+    const existing = graphDb.listNodes('CodeStyle').find(n => {
+      const p = n.properties || n;
+      return (p.pattern || '').toLowerCase() === pattern.toLowerCase() &&
+             (p.language || '') === (language || '');
+    });
+
+    if (existing) {
+      // Increase confidence (max 1.0)
+      const props = existing.properties || existing;
+      const observations = (props.observations || 1) + 1;
+      const confidence   = Math.min(1.0, observations / 10);
+      // Update node — recreate with higher confidence
+      graphDb.createNode('CodeStyle', {
+        pattern,
+        language:     language || 'any',
+        example:      example  || props.example || '',
+        confidence,
+        observations,
+        ide:          IDE,
+        ts:           Date.now(),
+      });
+      return { confidence, observations, updated: true };
+    } else {
+      // First observation
+      graphDb.createNode('CodeStyle', {
+        pattern,
+        language:     language || 'any',
+        example:      example  || '',
+        confidence:   0.3,
+        observations: 1,
+        ide:          IDE,
+        ts:           Date.now(),
+      });
+      return { confidence: 0.3, observations: 1, updated: false };
+    }
+  } catch (e) {
+    console.error('[storeCodeStyle]', e.message);
+    return {};
+  }
+}
+
+// ─────────────────────────────────────────────
+// WRITE: Store a security rule
+// ─────────────────────────────────────────────
+
+function storeSecurityRule({ rule, severity = 'medium', category, example }) {
+  const { graphDb } = getEngines();
+  try {
+    // Deduplicate
+    const existing = graphDb.listNodes('Security').find(n => {
+      const p = n.properties || n;
+      return (p.rule || '').toLowerCase() === rule.toLowerCase();
+    });
+
+    if (existing) {
+      const props = existing.properties || existing;
+      graphDb.createNode('Security', {
+        ...props,
+        applied_count: (props.applied_count || 0) + 1,
+        ts:            Date.now(),
+      });
+    } else {
+      graphDb.createNode('Security', {
+        rule, severity, category: category || 'general',
+        example: example || '',
+        applied_count: 1,
+        ts: Date.now(),
+      });
+    }
+  } catch (e) {
+    console.error('[storeSecurityRule]', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+// WRITE: Store a feature / roadmap item
+// ─────────────────────────────────────────────
+
+function storeFeature({ title, description, priority = 'medium', ide, model }) {
+  const { graphDb } = getEngines();
+  try {
+    graphDb.createNode('Feature', {
+      title,
+      description: description || '',
+      priority,
+      status:      'planned',
+      ide:         ide   || process.env.OVERDRIVE_IDE || 'Unknown',
+      model:       model || 'manual',
+      ts:          Date.now(),
+    });
+  } catch (e) {
+    console.error('[storeFeature]', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+// READ: Load compressed context (~410 tokens flat)
 // ─────────────────────────────────────────────
 
 async function loadCompressedContext(taskDesc, topK = 5) {
   const { graphDb, vectorDb, diskDb } = getEngines();
 
-  // 1. Semantic search — find similar past tasks (Vector engine)
-  //    Pass the embedding of the current task description
-  const taskEmbedding = await embedText(taskDesc); // your embedding fn
-  const similarTasks = vectorDb.vectorSearch('task_embeddings', taskEmbedding, topK);
+  // 1. Semantic search — only when Vector DB is on
+  const taskEmbedding = await embedText(taskDesc);
+  const similarTasks  = vectorDb
+    ? vectorDb.vectorSearch('task_embeddings', taskEmbedding, topK)
+    : [];
 
-  // 2. For each similar task, pull the reasoning SUMMARY from graph
-  //    (not the full chain — that's the whole point)
   const priorContext = similarTasks.map(match => {
-    const reasoningNodes = graphDb.graphTraverse(match.id, 1)
-      .filter(n => n.type === 'Reasoning');
-    return reasoningNodes.map(r => r.props.summary).join(' | ');
-  });
+    try {
+      const nodes = graphDb.graphTraverse(match.id, 1).filter(n => n.type === 'Reasoning');
+      return nodes.map(r => (r.props || {}).summary).join(' | ');
+    } catch (_) { return ''; }
+  }).filter(Boolean);
 
-  // 3. Pull last 3 code signatures from graph (not full code bodies)
-  const recentSolutions = diskDb.query(
-    'SELECT task, code_signature, model FROM solutions ORDER BY created_at DESC LIMIT 3'
-  );
+  // 2. Recent code signatures from disk
+  let recentSignatures = [];
+  try {
+    recentSignatures = diskDb.query(
+      'SELECT task, code_signature, model FROM solutions ORDER BY created_at DESC LIMIT 3'
+    ).map(s => s.code_signature);
+  } catch (_) {}
 
-  // 4. Assemble compressed context
+  // 3. Related patterns
+  const relatedPatterns = await findPatterns(taskDesc);
+
   return {
     task: taskDesc,
-    priorReasoning: priorContext.slice(0, 3),          // ~150 tokens
-    recentSignatures: recentSolutions.map(s => s.code_signature), // ~100 tokens
-    relatedPatterns: await findPatterns(taskDesc),     // ~100 tokens
+    priorReasoning:   priorContext.slice(0, 3),
+    recentSignatures,
+    relatedPatterns,
   };
-  // Total: ~350-500 tokens regardless of how long the session has been
 }
 
 // ─────────────────────────────────────────────
-// READ: Get full reasoning history for a task
-// (used only for debugging, not sent to models)
+// READ: Get learned code styles above confidence threshold
 // ─────────────────────────────────────────────
 
-function getTaskHistory(taskId) {
+function getConfirmedStyles(minConfidence = 0.5) {
   const { graphDb } = getEngines();
-  // Graph traverse depth=2 gives: Task → Reasoning → CodeBlock
-  return graphDb.graphTraverse(taskId, 2);
+  try {
+    return graphDb.listNodes('CodeStyle')
+      .map(n => n.properties || n)
+      .filter(p => (p.confidence || 0) >= minConfidence)
+      .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+      .slice(0, 5);
+  } catch (_) { return []; }
 }
 
 // ─────────────────────────────────────────────
-// READ: Find related code via vector similarity
+// READ: Get all security rules
 // ─────────────────────────────────────────────
 
-async function findSimilarCode(embedding, topK = 10) {
-  const { vectorDb } = getEngines();
-  return vectorDb.vectorSearch('code_embeddings', embedding, topK);
+function getSecurityRules() {
+  const { graphDb } = getEngines();
+  try {
+    return graphDb.listNodes('Security').map(n => n.properties || n);
+  } catch (_) { return []; }
 }
 
 // ─────────────────────────────────────────────
-// READ: Load known patterns from Disk engine
+// READ: Security audit — what's applied vs missing
 // ─────────────────────────────────────────────
 
-async function findPatterns(taskDesc) {
-  const { diskDb } = getEngines();
-  const keyword = extractKeyword(taskDesc);
-  return diskDb.search('patterns', keyword).slice(0, 3).map(p => p.signature);
+const SECURITY_CHECKLIST = [
+  { rule: 'Validate all API inputs',               category: 'input',    severity: 'high'   },
+  { rule: 'Use parameterized queries (no SQL injection)', category: 'db', severity: 'critical' },
+  { rule: 'Add rate limiting to API endpoints',    category: 'api',      severity: 'high'   },
+  { rule: 'Use HTTPS only',                        category: 'transport', severity: 'high'  },
+  { rule: 'Sanitize HTML outputs (prevent XSS)',   category: 'output',   severity: 'high'   },
+  { rule: 'Add CSRF protection to forms',          category: 'forms',    severity: 'medium' },
+  { rule: 'Hash passwords with bcrypt/argon2',     category: 'auth',     severity: 'critical' },
+  { rule: 'Never log sensitive data (passwords, tokens)', category: 'logging', severity: 'high' },
+  { rule: 'Set security headers (helmet.js)',      category: 'headers',  severity: 'medium' },
+  { rule: 'Keep dependencies up to date',          category: 'deps',     severity: 'medium' },
+];
+
+function getSecurityAudit() {
+  const applied = getSecurityRules().map(r => r.rule.toLowerCase());
+  const report  = SECURITY_CHECKLIST.map(item => ({
+    ...item,
+    applied: applied.some(a => a.includes(item.category) || item.rule.toLowerCase().includes(a.split(' ')[0])),
+  }));
+  return {
+    applied:   report.filter(r =>  r.applied),
+    missing:   report.filter(r => !r.applied),
+    score:     Math.round((report.filter(r => r.applied).length / report.length) * 100),
+  };
+}
+
+// ─────────────────────────────────────────────
+// READ: Ghost tasks (pending > 30 min)
+// ─────────────────────────────────────────────
+
+function getGhostTasks() {
+  const { graphDb } = getEngines();
+  const GHOST_THRESHOLD = 30 * 60 * 1000; // 30 minutes
+  try {
+    return graphDb.listNodes('Task')
+      .map(n => n.properties || n)
+      .filter(p =>
+        p.status === 'pending' &&
+        p.ts && (Date.now() - p.ts) > GHOST_THRESHOLD
+      )
+      .sort((a, b) => a.ts - b.ts);
+  } catch (_) { return []; }
+}
+
+// ─────────────────────────────────────────────
+// READ: Cross-session continuity summary
+// ─────────────────────────────────────────────
+
+function getCrossSessionSummary() {
+  const { graphDb } = getEngines();
+  try {
+    const allTasks = graphDb.listNodes('Task').map(n => n.properties || n);
+    if (!allTasks.length) return null;
+
+    // Sort by timestamp
+    const sorted     = allTasks.filter(t => t.ts).sort((a, b) => b.ts - a.ts);
+    const lastTask   = sorted[0];
+    const now        = Date.now();
+    const lastTs     = lastTask?.ts || 0;
+    const hoursSince = Math.round((now - lastTs) / 3600000);
+
+    // Is this a new session? (gap > 1 hour)
+    if (hoursSince < 1) return null;
+
+    const ghosts     = getGhostTasks();
+    const lastModel  = lastTask?.model  || 'unknown';
+    const lastIde    = lastTask?.ide    || 'Unknown';
+
+    return {
+      hoursSince,
+      lastTask:   lastTask?.description?.substring(0, 80) || '—',
+      lastModel,
+      lastIde,
+      ghostCount: ghosts.length,
+      ghosts:     ghosts.slice(0, 3).map(g => g.description?.substring(0, 60)),
+    };
+  } catch (_) { return null; }
+}
+
+// ─────────────────────────────────────────────
+// READ: Model performance heatmap
+// ─────────────────────────────────────────────
+
+function getModelHeatmap() {
+  const { graphDb } = getEngines();
+  try {
+    const tasks = graphDb.listNodes('Task').map(n => n.properties || n).filter(t => t.model && t.ide);
+
+    // Group by ide+model+category
+    const map = {};
+    tasks.forEach(t => {
+      const key = `${t.ide}|${t.model}|${t.category || 'general'}`;
+      if (!map[key]) map[key] = { ide: t.ide, model: t.model, category: t.category || 'general', total: 0, completed: 0 };
+      map[key].total++;
+      if (t.status === 'completed') map[key].completed++;
+    });
+
+    return Object.values(map).map(r => ({
+      ...r,
+      successRate: r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0,
+    })).sort((a, b) => b.successRate - a.successRate);
+  } catch (_) { return []; }
+}
+
+// ─────────────────────────────────────────────
+// READ: Planned features + dead feature detection
+// ─────────────────────────────────────────────
+
+function getFeatures() {
+  const { graphDb } = getEngines();
+  const DEAD_FEATURE_DAYS = 7;
+  try {
+    return graphDb.listNodes('Feature').map(n => {
+      const p   = n.properties || n;
+      const age = (Date.now() - (p.ts || 0)) / 86400000; // days
+      return {
+        ...p,
+        id:   n.id || n._id,
+        dead: p.status === 'planned' && age > DEAD_FEATURE_DAYS,
+        ageDays: Math.round(age),
+      };
+    }).sort((a, b) => {
+      const pri = { high: 0, medium: 1, low: 2 };
+      return (pri[a.priority] || 1) - (pri[b.priority] || 1);
+    });
+  } catch (_) { return []; }
+}
+
+// ─────────────────────────────────────────────
+// READ: Explain why a past decision was made
+// ─────────────────────────────────────────────
+
+function explainDecision(taskId) {
+  const { graphDb } = getEngines();
+  try {
+    // Find task
+    const allTasks = graphDb.listNodes('Task');
+    const task     = allTasks.find(n => {
+      const p = n.properties || n;
+      return (n.id === taskId || p.id === taskId);
+    });
+
+    if (!task) return { error: `Task ${taskId} not found` };
+    const taskProps = task.properties || task;
+
+    // Traverse to find connected Reasoning nodes
+    let reasoning = [];
+    try {
+      const traversed = graphDb.graphTraverse(task.id || taskId, 2);
+      reasoning = traversed
+        .filter(n => n.type === 'Reasoning')
+        .map(n => (n.props || n.properties || {}).summary)
+        .filter(Boolean);
+    } catch (_) {}
+
+    // Find ModelSwitch nodes around same timestamp
+    let modelSwitch = null;
+    try {
+      const switches = graphDb.listNodes('ModelSwitch')
+        .map(n => n.properties || n)
+        .filter(p => p.timestamp && Math.abs(p.timestamp - (taskProps.ts || 0)) < 300000);
+      modelSwitch = switches[0] || null;
+    } catch (_) {}
+
+    return {
+      task:        taskProps.description,
+      ide:         taskProps.ide    || 'Unknown',
+      model:       taskProps.model  || 'unknown',
+      category:    taskProps.category || 'general',
+      timestamp:   taskProps.ts ? new Date(taskProps.ts).toLocaleString() : '—',
+      reasoning:   reasoning.join(' → ') || 'No reasoning chain stored for this task.',
+      modelSwitch: modelSwitch
+        ? `Switched from ${modelSwitch.from_model} to ${modelSwitch.to_model}: ${modelSwitch.reason}`
+        : null,
+    };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+// ─────────────────────────────────────────────
+// READ: Full graph export for visualization
+// ─────────────────────────────────────────────
+
+function exportFullGraph() {
+  const { graphDb } = getEngines();
+  const uniqueNodes = new Map();
+  const uniqueEdges = new Map();
+
+  const COLOR = { Task: '#66fcf1', Reasoning: '#f2a900', CodeBlock: '#c5c6c7', CodeStyle: '#22c55e', Security: '#ef4444', Feature: '#a78bfa', Project: '#3b82f6', ModelSwitch: '#f97316' };
+
+  ['Task', 'Reasoning', 'CodeBlock', 'CodeStyle', 'Security', 'Feature', 'Project', 'ModelSwitch'].forEach(type => {
+    try {
+      graphDb.listNodes(type).forEach(n => {
+        if (uniqueNodes.has(n.id)) return;
+        const p = n.properties || n;
+        uniqueNodes.set(n.id, {
+          id:    n.id,
+          label: `${type}\n${(p.description || p.title || p.pattern || p.rule || p.summary || '').substring(0, 25)}`,
+          color: COLOR[type] || '#66fcf1',
+          props: p,
+        });
+
+        try {
+          graphDb.graphTraverse(n.id, 2).forEach(child => {
+            if (!uniqueNodes.has(child.id)) {
+              const cp = child.props || {};
+              uniqueNodes.set(child.id, {
+                id:    child.id,
+                label: `${child.type}\n${(cp.description || cp.summary || cp.signature || '').substring(0, 25)}`,
+                color: COLOR[child.type] || '#66fcf1',
+                props: cp,
+              });
+            }
+            if (child.edges) {
+              child.edges.forEach(e => {
+                const eid = `${e.from}_${e.to}`;
+                uniqueEdges.set(eid, { from: e.from, to: e.to, label: e.type });
+              });
+            }
+          });
+        } catch (_) {}
+      });
+    } catch (_) {}
+  });
+
+  if (uniqueNodes.size === 0) {
+    uniqueNodes.set('empty', { id: 'empty', label: 'No data yet', color: '#64748b', props: {} });
+  }
+
+  return { nodes: Array.from(uniqueNodes.values()), edges: Array.from(uniqueEdges.values()) };
 }
 
 // ─────────────────────────────────────────────
@@ -138,111 +486,71 @@ async function findPatterns(taskDesc) {
 // ─────────────────────────────────────────────
 
 function summarizeChain(chain) {
-  // Extract just the decision points from the reasoning chain
-  // "I need to check X because Y, so I'll do Z" → "checked X → did Z"
-  const steps = chain.split('\n').filter(l => l.trim().length > 0);
-  return steps.slice(-3).join(' → ').slice(0, 200); // last 3 steps, max 200 chars
+  const steps = (chain || '').split('\n').filter(l => l.trim());
+  return steps.slice(-3).join(' → ').substring(0, 200);
 }
 
 function extractSignature(codeOutput) {
-  // Extract function/class signatures only — not full bodies
-  // e.g. "async function fetchUser(id: string): Promise<User>" not the full function
-  const lines = (codeOutput.code || '').split('\n');
+  const lines = (codeOutput?.code || codeOutput || '').split('\n');
   return lines
     .filter(l => /^(export\s+)?(async\s+)?function|^const\s+\w+\s*=|^class\s+/.test(l.trim()))
-    .slice(0, 5)
-    .join('\n');
+    .slice(0, 5).join('\n').substring(0, 400);
 }
 
 function detectLanguage(codeOutput) {
-  return codeOutput.language || 'javascript';
+  return (codeOutput?.language) || 'javascript';
 }
 
 function estimateTokens(text) {
-  return Math.ceil(text.length / 4); // rough 4-chars-per-token estimate
+  return Math.ceil((text || '').length / 4);
 }
 
 function extractKeyword(taskDesc) {
-  return taskDesc.split(' ').slice(0, 3).join(' ');
+  return (taskDesc || '').split(' ').slice(0, 3).join(' ');
 }
 
-// Replace with your actual embedding function (e.g. Anthropic, OpenAI, local)
 async function embedText(text) {
-  // Returns a Float32Array of length 384
-  // e.g. from @xenova/transformers or OpenAI text-embedding-3-small
   return new Array(384).fill(0).map(() => Math.random()); // placeholder
 }
 
-// ─────────────────────────────────────────────
-// EXPORT: Export the full graph for visualization
-// ─────────────────────────────────────────────
-
-function exportFullGraph() {
-  const { graphDb, diskDb } = getEngines();
-  
-  let tasks = [];
+async function findPatterns(taskDesc) {
+  const { diskDb } = getEngines();
   try {
-    tasks = diskDb.query('SELECT task_id FROM solutions');
-  } catch(e) {}
+    const keyword = extractKeyword(taskDesc);
+    return diskDb.search('patterns', keyword).slice(0, 3).map(p => p.signature);
+  } catch (_) { return []; }
+}
 
-  const uniqueNodes = new Map();
-  const uniqueEdges = new Map();
+function getTaskHistory(taskId) {
+  const { graphDb } = getEngines();
+  try { return graphDb.graphTraverse(taskId, 2); } catch (_) { return []; }
+}
 
-  tasks.forEach(t => {
-    if(!t.task_id) return;
-    try {
-      const traverseNodes = graphDb.graphTraverse(t.task_id, 3);
-      traverseNodes.forEach(node => {
-        if(!uniqueNodes.has(node.id)) {
-            let color = '#66fcf1'; // Task
-            if(node.type === 'Reasoning') color = '#f2a900';
-            if(node.type === 'CodeBlock') color = '#c5c6c7';
-            
-            uniqueNodes.set(node.id, {
-                id: node.id,
-                label: `${node.type}\n${(node.props.description || node.props.summary || node.props.signature || '').substring(0, 20)}...`,
-                color: color,
-                props: node.props
-            });
-        }
-        
-        if (node.edges) {
-            node.edges.forEach(edge => {
-                const edgeId = `${edge.from}_${edge.to}`;
-                uniqueEdges.set(edgeId, {
-                    from: edge.from,
-                    to: edge.to,
-                    label: edge.type
-                });
-            });
-        }
-      });
-    } catch(e) {}
-  });
-
-  // Mock data if empty for demonstration
-  if(uniqueNodes.size === 0) {
-      uniqueNodes.set('n1', { id: 'n1', label: 'Task\nBuild Dashboard', color: '#66fcf1', props: { description: 'Build dashboard for ODB' } });
-      uniqueNodes.set('n2', { id: 'n2', label: 'Reasoning\nAnalyzed', color: '#f2a900', props: { summary: 'Analyzed requirement' } });
-      uniqueNodes.set('n3', { id: 'n3', label: 'CodeBlock\nHTML/JS', color: '#c5c6c7', props: { signature: 'index.html' } });
-      uniqueEdges.set('e1', { from: 'n1', to: 'n2', label: 'SOLVED_BY' });
-      uniqueEdges.set('e2', { from: 'n2', to: 'n3', label: 'PRODUCED' });
-  }
-
-  return {
-    nodes: Array.from(uniqueNodes.values()),
-    edges: Array.from(uniqueEdges.values())
-  };
+async function findSimilarCode(embedding, topK = 10) {
+  const { vectorDb } = getEngines();
+  if (!vectorDb) return [];
+  return vectorDb.vectorSearch('code_embeddings', embedding, topK);
 }
 
 module.exports = {
   storeAgentTurn,
+  storeCodeStyle,
+  storeSecurityRule,
+  storeFeature,
   loadCompressedContext,
+  getConfirmedStyles,
+  getSecurityRules,
+  getSecurityAudit,
+  getGhostTasks,
+  getCrossSessionSummary,
+  getModelHeatmap,
+  getFeatures,
+  explainDecision,
+  exportFullGraph,
   getTaskHistory,
   findSimilarCode,
   findPatterns,
   extractKeyword,
   embedText,
   estimateTokens,
-  exportFullGraph,
 };

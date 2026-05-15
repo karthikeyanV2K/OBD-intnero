@@ -1,64 +1,142 @@
 /**
  * agent-db.js
- * Initializes all 6 OverdriveDB engines.
- * Each engine has one specific job — no overlap.
+ * Lazy-init, low-resource OverdriveDB engine manager.
  *
- * Engine → Responsibility mapping:
- *   Graph      → task nodes, reasoning chains, model-decision edges
- *   Vector     → code embeddings (384-dim), semantic similarity search
- *   TimeSeries → token usage, latency, model performance per call
- *   Streaming  → async task queue, agent event bus
- *   RAM        → current session context, snapshot on model switch
- *   Disk       → persistent knowledge base (long-term storage)
+ * Design rules (zero resource drain):
+ *   1. Engines open ONLY on first access
+ *   2. Graph + TimeSeries + Stream close after 30s idle (releases overdrive.dll lock)
+ *   3. Vector DB OFF by default — enable with OVERDRIVE_VECTOR=1
+ *   4. RAM + Disk stay open (cheap, no lock contention)
+ *   5. All logs → stderr. stdout = MCP JSON-RPC only.
  */
 
 const { OverdriveDb } = require('overdrive-db');
 
-let graphDb, vectorDb, tsDb, streamDb, ramDb, diskDb;
+let graphDb = null, vectorDb = null, tsDb = null;
+let streamDb = null, ramDb = null, diskDb = null;
+
+let _initialized = false;
+let _idleTimer    = null;
+
+const IDLE_CLOSE_MS  = 30_000;
+const VECTOR_ENABLED = process.env.OVERDRIVE_VECTOR === '1';
+
+// ─────────────────────────────────────────────
+// Idle timer — closes expensive handles after inactivity
+// ─────────────────────────────────────────────
+
+function resetIdleTimer() {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(() => {
+    try {
+      if (graphDb)  { graphDb.close?.();  graphDb  = null; }
+      if (tsDb)     { tsDb.close?.();     tsDb     = null; }
+      if (streamDb) { streamDb.close?.(); streamDb = null; }
+      if (vectorDb) { vectorDb.close?.(); vectorDb = null; }
+      _initialized = false;
+      console.error('[db] Idle 30s: handles closed. RAM+Disk stay open.');
+    } catch (e) { console.error('[db] Idle close error:', e.message); }
+  }, IDLE_CLOSE_MS);
+}
+
+// ─────────────────────────────────────────────
+// Init — opens only what we need
+// ─────────────────────────────────────────────
 
 async function initAllEngines() {
-  // 1. GRAPH — stores task/reasoning/code as connected nodes
+  if (_initialized && graphDb) { resetIdleTimer(); return; }
+
+  // 1. GRAPH — all intelligence nodes live here
   graphDb = OverdriveDb.open('agent-graph.odb', { engine: 'Graph' });
-  graphDb.createNodeType('Task');        // { id, description, status, model, created_at }
-  graphDb.createNodeType('Reasoning');   // { id, chain, summary, model, tokens_used }
-  graphDb.createNodeType('CodeBlock');   // { id, signature, language, file, quality_score }
-  graphDb.createNodeType('ModelSwitch'); // { id, from_model, to_model, reason, timestamp }
-  graphDb.createEdgeType('SOLVED_BY');   // Task → Reasoning
-  graphDb.createEdgeType('PRODUCED');    // Reasoning → CodeBlock
-  graphDb.createEdgeType('SWITCHED_TO'); // Task → ModelSwitch
-  graphDb.createEdgeType('DEPENDS_ON'); // CodeBlock → CodeBlock
+  try {
+    // Core nodes
+    graphDb.createNodeType('Task');        // { description, model, ide, status, category, ts }
+    graphDb.createNodeType('Reasoning');   // { summary≤200chars, model, ide, ts }
+    graphDb.createNodeType('CodeBlock');   // { signature, language, file, ide, ts }
+    graphDb.createNodeType('ModelSwitch'); // { from_model, to_model, reason, ide, ts }
 
-  // 2. VECTOR — code embeddings for semantic search
-  vectorDb = OverdriveDb.open('agent-vectors.odb', { engine: 'Vector' });
-  vectorDb.createVectorIndex('code_embeddings', 384);
-  vectorDb.createVectorIndex('task_embeddings', 384);
+    // Intelligence nodes (v1.0.13)
+    graphDb.createNodeType('CodeStyle');   // { pattern, language, example, confidence, observations, ide, ts }
+    graphDb.createNodeType('Security');    // { rule, severity, category, example, applied_count, ts }
+    graphDb.createNodeType('Feature');     // { title, description, priority, status, ide, model, ts }
+    graphDb.createNodeType('Project');     // { name, stack, phase, description, ide, model, ts }
 
-  // 3. TIMESERIES — token usage + model performance metrics
+    // Edges
+    graphDb.createEdgeType('SOLVED_BY');
+    graphDb.createEdgeType('PRODUCED');
+    graphDb.createEdgeType('SWITCHED_TO');
+    graphDb.createEdgeType('DEPENDS_ON');
+    graphDb.createEdgeType('USES_STYLE');
+    graphDb.createEdgeType('FOLLOWS_RULE');
+    graphDb.createEdgeType('PLANS_FEATURE');
+    graphDb.createEdgeType('PART_OF');
+  } catch (_) { /* types already exist on re-open */ }
+
+  // 2. TIMESERIES — metrics + heatmap data
   tsDb = OverdriveDb.open('agent-metrics.odb', { engine: 'TimeSeries' });
-  tsDb.createTimeseries('token_usage',   90 * 24 * 3600); // 90 days in seconds
-  tsDb.createTimeseries('latency_ms',    90 * 24 * 3600);
-  tsDb.createTimeseries('quality_score', 90 * 24 * 3600);
+  try {
+    tsDb.createTimeseries('token_usage', 90 * 24 * 3600);
+    tsDb.createTimeseries('latency_ms',  90 * 24 * 3600);
+    tsDb.createTimeseries('task_success', 90 * 24 * 3600);
+  } catch (_) {}
 
-  // 4. STREAMING — task queue and agent event bus
+  // 3. STREAMING — async queue
   streamDb = OverdriveDb.open('agent-stream.odb', { engine: 'Streaming' });
-  streamDb.createTopic('task_queue',    4); // 4 partitions
-  streamDb.createTopic('agent_events',  2); // 2 partitions
-  streamDb.createTopic('model_results', 4); // 4 partitions
+  try {
+    streamDb.createTopic('task_queue',    4);
+    streamDb.createTopic('model_results', 4);
+  } catch (_) {}
 
-  // 5. RAM — current session (fast reads, snapshot/restore on model switch)
-  ramDb = OverdriveDb.open('agent-session.odb', { engine: 'RAM' });
-  ramDb.createTable('session');
-  ramDb.createTable('context_cache');
+  // 4. RAM — session (volatile, fast)
+  if (!ramDb) {
+    ramDb = OverdriveDb.open('agent-session.odb', { engine: 'RAM' });
+    try {
+      ramDb.createTable('session');
+      ramDb.createTable('context_cache');
+    } catch (_) {}
+  }
 
-  // 6. DISK — persistent knowledge base
-  diskDb = OverdriveDb.open('agent-knowledge.odb', { engine: 'Disk' });
-  diskDb.createTable('patterns');   // known code patterns
-  diskDb.createTable('solutions');  // successful solutions archive
-  diskDb.createTable('models');     // model config + capabilities
+  // 5. DISK — long-term knowledge
+  if (!diskDb) {
+    diskDb = OverdriveDb.open('agent-knowledge.odb', { engine: 'Disk' });
+    try {
+      diskDb.createTable('patterns');
+      diskDb.createTable('solutions');
+    } catch (_) {}
+  }
+
+  // 6. VECTOR — off by default
+  if (VECTOR_ENABLED && !vectorDb) {
+    vectorDb = OverdriveDb.open('agent-vectors.odb', { engine: 'Vector' });
+    try { vectorDb.createVectorIndex('code_embeddings', 384); } catch (_) {}
+    console.error('[db] Vector DB ON (OVERDRIVE_VECTOR=1)');
+  }
+
+  _initialized = true;
+  resetIdleTimer();
+  console.error(`[db] Ready. Vector: ${VECTOR_ENABLED ? 'ON' : 'OFF'}`);
 }
 
 function getEngines() {
+  resetIdleTimer();
   return { graphDb, vectorDb, tsDb, streamDb, ramDb, diskDb };
 }
 
-module.exports = { initAllEngines, getEngines };
+// ─────────────────────────────────────────────
+// Task auto-categorization
+// ─────────────────────────────────────────────
+
+function categorizeTask(description) {
+  const d = (description || '').toLowerCase();
+  if (/\b(fix|bug|error|crash|null|undefined|exception|fail|broken|wrong)\b/.test(d)) return 'debug';
+  if (/\b(add|build|create|new|implement|feature|support)\b/.test(d))                 return 'feature';
+  if (/\b(refactor|clean|improve|optimize|restructure|simplify)\b/.test(d))           return 'refactor';
+  if (/\b(plan|design|architect|structure|system|overview)\b/.test(d))                return 'architecture';
+  if (/\b(publish|deploy|release|npm|package|version|ship)\b/.test(d))               return 'deployment';
+  if (/\b(style|css|ui|layout|design|theme|color|font)\b/.test(d))                   return 'ui';
+  if (/\b(test|spec|unit|integration|coverage)\b/.test(d))                           return 'testing';
+  if (/\b(security|auth|validate|sanitize|inject|csrf|xss)\b/.test(d))               return 'security';
+  return 'general';
+}
+
+module.exports = { initAllEngines, getEngines, categorizeTask };

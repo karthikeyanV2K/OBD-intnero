@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "overdrive": {
+      "command": "node",
+      "args": ["C:/Users/karth/AppData/Roaming/npm/node_modules/odb-echograph/mcp-server.js"],
+      "env": {
+        "OVERDRIVE_IDE": "Kiro",
+        "OVERDRIVE_VECTOR": "0"
+      }
+    }
+  }
+}

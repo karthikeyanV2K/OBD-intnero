@@ -29,7 +29,8 @@ function submitTask(taskDesc, model = 'claude-sonnet-4-6', priority = 'normal') 
     priority,
     submitted_at: Date.now(),
   });
-  console.log(`[worker] Task queued: "${taskDesc.slice(0, 60)}..."`);
+  console.error(`[worker] Task queued: "${taskDesc.slice(0, 60)}..."`);
+  return `task_${Date.now()}`;
 }
 
 // ─────────────────────────────────────────────
@@ -47,7 +48,7 @@ async function startWorker(partition = 0) {
     partition,
   });
 
-  console.log(`[worker] Started on partition ${partition}`);
+  console.error(`[worker] Started on partition ${partition}`);
 
   while (isRunning) {
     const messages = streamDb.poll(workerSub, { maxMessages: 5 });
@@ -59,7 +60,7 @@ async function startWorker(partition = 0) {
 
     for (const msg of messages) {
       const task = JSON.parse(msg.payload);
-      console.log(`[worker] Processing: ${task.description.slice(0, 60)}`);
+      console.error(`[worker] Processing: ${task.description.slice(0, 60)}`);
 
       try {
         const result = await routeTask(task.description, task.model);

@@ -19,10 +19,20 @@
  */
 
 const { getEngines } = require('./agent-db');
-const { loadCompressedContext, findPatterns, extractKeyword, estimateTokens } = require('./knowledge');
+const {
+  loadCompressedContext, findPatterns, extractKeyword, estimateTokens,
+  getConfirmedStyles, getSecurityRules, getCrossSessionSummary,
+  getModelHeatmap, getGhostTasks,
+} = require('./knowledge');
 
 function queryNodes(graphDb, type, options = {}) {
-  let nodes = graphDb.listNodes(type).map(n => ({ id: n._id || n.id || n.taskId || n.reasoningId || n.codeId || 'unknown', props: n }));
+  let nodes = graphDb.listNodes(type).map(n => {
+    // OverdriveDB returns { id, node_type, properties: {...} }
+    // Unwrap so t.props.model works instead of t.props.properties.model
+    const props = n.properties || n;
+    const id    = n.id || n._id || props.id || props.taskId || 'unknown';
+    return { id, props };
+  });
   if (options.filter) nodes = nodes.filter(options.filter);
   if (options.orderBy) nodes = nodes.sort((a, b) => {
     let va = a.props[options.orderBy] || 0;
@@ -42,13 +52,15 @@ const REFERENCE_PATTERNS = [
   // pronouns pointing to prior context
   /\b(that|this|it|those|these)\b/i,
   // temporal references
-  /\b(before|previous|last|earlier|above|prior)\b/i,
+  /\b(before|previous|last|earlier|above|prior|yesterday|last session)\b/i,
   // implicit references
-  /\b(the (bug|error|function|class|file|code|issue|fix|problem|task|one))\b/i,
+  /\b(the (bug|error|function|class|file|code|issue|fix|problem|task|one|feature|style|rule))\b/i,
   // fix/continue references
-  /\b(fix it|do it|continue|same (thing|task|one))\b/i,
+  /\b(fix it|do it|continue|same (thing|task|one)|what we planned|what we did)\b/i,
   // "that X" pattern
-  /that (bug|error|function|class|method|component|issue|feature|task)/i,
+  /that (bug|error|function|class|method|component|issue|feature|task|style|security|rule)/i,
+  // model/ide references
+  /\b(what (kiro|claude|gpt|copilot|antigravity|vscode) did)\b/i,
 ];
 
 function hasReference(userInput) {
@@ -200,19 +212,67 @@ When the user refers to "that", "this", "it", or "the previous", you know exactl
     }
   }
 
-  // ── Section 3: Current session state (RAM, ~100 tokens) ──
-  const session = ramDb.query('SELECT * FROM session ORDER BY ts DESC LIMIT 1')[0];
+  // ── Section 3: Current session state (RAM, ~40 tokens) ──
+  let session = null;
+  try {
+    const rows = ramDb.query('SELECT * FROM session ORDER BY ts DESC LIMIT 1');
+    session = rows[0] || null;
+  } catch (_) {}
   if (session) {
     const sessionText = buildSessionText(session);
-    sections.push({
-      name: 'session',
-      weight: 90,
-      tokens: estimateTokens(sessionText),
-      text: sessionText,
-    });
+    sections.push({ name: 'session', weight: 90, tokens: estimateTokens(sessionText), text: sessionText });
   }
 
-  // ── Section 4: Recent graph history — last 3 tasks (~150 tokens) ──
+  // ── Section 3b: Cross-session continuity (~40 tokens) ──
+  try {
+    const cont = getCrossSessionSummary();
+    if (cont) {
+      const contText = [
+        `[Last session — ${cont.hoursSince}h ago | ${cont.lastIde} + ${cont.lastModel}]`,
+        `Last task: ${cont.lastTask}`,
+        cont.ghostCount > 0 ? `⚠️ ${cont.ghostCount} unfinished task(s) from last session: ${cont.ghosts.join(', ')}` : null,
+      ].filter(Boolean).join('\n');
+      sections.push({ name: 'continuity', weight: 95, tokens: estimateTokens(contText), text: contText });
+    }
+  } catch (_) {}
+
+  // ── Section 3c: Learned code style rules (~60 tokens) ──
+  try {
+    const styles = getConfirmedStyles(0.5);
+    if (styles.length > 0) {
+      const styleText = [
+        '[Your confirmed coding style — follow these always]',
+        ...styles.map(s => `✅ ${s.pattern}${s.example ? ` (e.g. ${s.example.substring(0,40)})` : ''} [confidence: ${Math.round((s.confidence||0)*100)}%]`),
+      ].join('\n');
+      sections.push({ name: 'style', weight: 88, tokens: estimateTokens(styleText), text: styleText });
+    }
+  } catch (_) {}
+
+  // ── Section 3d: Security rules (~40 tokens) ──
+  try {
+    const rules = getSecurityRules().slice(0, 4);
+    if (rules.length > 0) {
+      const secText = [
+        '[Security rules — always apply]',
+        ...rules.map(r => `🔒 [${r.severity?.toUpperCase() || 'MED'}] ${r.rule}`),
+      ].join('\n');
+      sections.push({ name: 'security', weight: 85, tokens: estimateTokens(secText), text: secText });
+    }
+  } catch (_) {}
+
+  // ── Section 3e: Best model suggestion (~30 tokens) ──
+  try {
+    const { categorizeTask } = require('./agent-db');
+    const category = categorizeTask(userInput);
+    const heatmap  = getModelHeatmap();
+    const best     = heatmap.filter(h => h.category === category).sort((a,b) => b.successRate - a.successRate)[0];
+    if (best && best.successRate > 0) {
+      const hText = `[Best performer for ${category} tasks: ${best.ide} + ${best.model} (${best.successRate}% success rate)]`;
+      sections.push({ name: 'heatmap', weight: 70, tokens: estimateTokens(hText), text: hText });
+    }
+  } catch (_) {}
+
+  // ── Section 4: Recent graph history — last 4 tasks (~150 tokens) ──
   const recentTasks = queryNodes(graphDb, 'Task', {
     limit: 3,
     orderBy: 'created_at',

@@ -1,77 +1,743 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ODB-Echograph Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
-    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Overdrive AI — Memory Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0e1a;
+      --surface:   #111827;
+      --surface2:  #1a2235;
+      --border:    rgba(255,255,255,0.07);
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --cyan:      #22d3ee;
+      --purple:    #a78bfa;
+      --blue:      #3b82f6;
+      --orange:    #f97316;
+      --green:     #22c55e;
+      --yellow:    #eab308;
+      --red:       #ef4444;
+      --pink:      #ec4899;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #0f1729 0%, #111827 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--cyan), var(--purple));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .logo h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+    .logo span { color: var(--cyan); }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .live-dot {
+      width: 8px; height: 8px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(1.3); }
+    }
+
+    /* ── Stats bar ── */
+    .stats-bar {
+      display: flex;
+      gap: 16px;
+      padding: 16px 32px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 20px;
+      min-width: 130px;
+      flex-shrink: 0;
+      transition: border-color 0.2s;
+    }
+    .stat-card:hover { border-color: rgba(34,211,238,0.3); }
+
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+    .stat-value { font-size: 26px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+    .stat-value.cyan   { color: var(--cyan); }
+    .stat-value.purple { color: var(--purple); }
+    .stat-value.green  { color: var(--green); }
+    .stat-value.orange { color: var(--orange); }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .search-wrap {
+      position: relative;
+      flex: 1;
+      max-width: 420px;
+    }
+
+    .search-icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      color: var(--muted); font-size: 14px; pointer-events: none;
+    }
+
+    input[type="search"] {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 14px 9px 36px;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="search"]:focus { border-color: var(--cyan); }
+    input[type="search"]::placeholder { color: var(--muted); }
+
+    select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    select:focus { border-color: var(--cyan); }
+    select option { background: var(--surface2); }
+
+    .btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 16px;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      display: flex; align-items: center; gap: 6px;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .btn.primary { background: rgba(34,211,238,0.1); border-color: var(--cyan); color: var(--cyan); }
+
+    .refresh-info { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+    /* Tabs */
+    .tabs { display:flex; gap:4px; padding: 12px 32px 0; border-bottom: 1px solid var(--border); }
+    .tab-btn { background:none; border:none; padding:10px 18px; font-family:'Inter',sans-serif; font-size:13px; font-weight:500; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all 0.2s; }
+    .tab-btn.active { color:var(--cyan); border-bottom-color:var(--cyan); }
+    .tab-btn:hover { color:var(--text); }
+    .tab-panel { display:none; } .tab-panel.active { display:block; }
+
+    /* Feature cards */
+    .feature-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; padding:24px 32px; }
+    .feature-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; transition:border-color 0.2s; }
+    .feature-card:hover { border-color:rgba(167,139,250,0.4); }
+    .feature-card.dead { border-color:rgba(239,68,68,0.3); }
+    .fc-title { font-weight:600; font-size:14px; margin-bottom:8px; }
+    .fc-desc { font-size:12px; color:var(--muted); line-height:1.5; }
+    .fc-meta { display:flex; gap:8px; margin-top:12px; align-items:center; flex-wrap:wrap; }
+    .pri-high { background:rgba(239,68,68,0.12); color:var(--red); border:1px solid rgba(239,68,68,0.3); font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; }
+    .pri-medium { background:rgba(234,179,8,0.12); color:var(--yellow); border:1px solid rgba(234,179,8,0.3); font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; }
+    .pri-low { background:rgba(34,197,94,0.12); color:var(--green); border:1px solid rgba(34,197,94,0.3); font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; }
+
+    /* Style bars */
+    .style-list { padding:24px 32px; display:flex; flex-direction:column; gap:12px; }
+    .style-row { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 20px; }
+    .style-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+    .style-pattern { font-weight:500; font-size:13px; }
+    .conf-pct { font-size:12px; font-family:'JetBrains Mono',monospace; color:var(--cyan); }
+    .conf-bar { height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; }
+    .conf-fill { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--cyan),var(--purple)); transition:width 0.6s ease; }
+
+    /* Heatmap table */
+    .heatmap-wrap { padding:24px 32px; }
+    .heatmap-wrap table { width:100%; border-collapse:collapse; font-size:13px; }
+    .heatmap-wrap th { text-align:left; padding:10px 14px; font-size:11px; text-transform:uppercase; letter-spacing:0.8px; color:var(--muted); border-bottom:1px solid var(--border); }
+    .heatmap-wrap td { padding:12px 14px; border-bottom:1px solid var(--border); }
+    .success-bar { display:flex; align-items:center; gap:8px; }
+    .bar-bg { flex:1; height:8px; background:var(--surface2); border-radius:4px; overflow:hidden; }
+    .bar-fill { height:100%; border-radius:4px; }
+    .bar-fill.high { background:var(--green); } .bar-fill.med { background:var(--yellow); } .bar-fill.low { background:var(--red); }
+    .cat-badge { font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; background:rgba(59,130,246,0.12); color:var(--blue); border:1px solid rgba(59,130,246,0.3); }
+
+    /* ── Table ── */
+    .table-wrap {
+      padding: 0 32px 32px;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 13px;
+    }
+
+    thead tr {
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+      cursor: pointer;
+    }
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+    td {
+      padding: 14px 16px;
+      vertical-align: middle;
+      max-width: 380px;
+    }
+
+    .num { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 12px; }
+
+    .task-desc {
+      font-weight: 500;
+      line-height: 1.5;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .reasoning-text {
+      font-size: 12px;
+      color: var(--muted);
+      font-style: italic;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    /* IDE badges */
+    .ide-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      white-space: nowrap;
+      letter-spacing: 0.3px;
+    }
+    .ide-Antigravity { background: rgba(34,211,238,0.12); color: var(--cyan);   border: 1px solid rgba(34,211,238,0.3); }
+    .ide-Kiro        { background: rgba(167,139,250,0.12); color: var(--purple); border: 1px solid rgba(167,139,250,0.3); }
+    .ide-VSCode      { background: rgba(59,130,246,0.12);  color: var(--blue);   border: 1px solid rgba(59,130,246,0.3); }
+    .ide-Copilot     { background: rgba(236,72,153,0.12);  color: var(--pink);   border: 1px solid rgba(236,72,153,0.3); }
+    .ide-ExternalAPI { background: rgba(249,115,22,0.12);  color: var(--orange); border: 1px solid rgba(249,115,22,0.3); }
+    .ide-Unknown     { background: rgba(100,116,139,0.12); color: var(--muted);  border: 1px solid rgba(100,116,139,0.3); }
+
+    /* Status badges */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+    .status-completed { background: rgba(34,197,94,0.12);  color: var(--green);  border: 1px solid rgba(34,197,94,0.3); }
+    .status-pending   { background: rgba(234,179,8,0.12);  color: var(--yellow); border: 1px solid rgba(234,179,8,0.3); }
+    .status-error     { background: rgba(239,68,68,0.12);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+    .status-review    { background: rgba(59,130,246,0.12); color: var(--blue);   border: 1px solid rgba(59,130,246,0.3); }
+    .status-blocked   { background: rgba(249,115,22,0.12); color: var(--orange); border: 1px solid rgba(249,115,22,0.3); }
+    .status-unknown   { background: rgba(100,116,139,0.12); color: var(--muted); border: 1px solid rgba(100,116,139,0.3); }
+
+    .model-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .time-tag {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* Empty + loading state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+    }
+    .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+    .empty-state p  { font-size: 14px; }
+
+    .loading { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Detail panel ── */
+    .detail-panel {
+      position: fixed;
+      right: 0; top: 0; bottom: 0;
+      width: 420px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      padding: 24px;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      overflow-y: auto;
+      z-index: 200;
+    }
+    .detail-panel.open { transform: translateX(0); }
+
+    .detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .detail-title { font-size: 15px; font-weight: 600; line-height: 1.4; flex: 1; padding-right: 12px; }
+
+    .close-btn {
+      background: none; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); cursor: pointer; padding: 4px 10px; font-size: 16px;
+      flex-shrink: 0;
+    }
+    .close-btn:hover { color: var(--text); }
+
+    .detail-field { margin-bottom: 16px; }
+    .detail-field label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+    .detail-field .val { font-size: 13px; line-height: 1.6; }
+    .detail-field pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 3px; }
+  </style>
 </head>
 <body>
-    <div class="app-container">
-        <!-- Sidebar -->
-        <aside class="sidebar glass-panel">
-            <div class="logo">
-                <h1>ODB <span>Echograph</span></h1>
-                <p class="tagline">by AFOT (mr.v2k)</p>
-            </div>
-            
-            <div class="panel-section">
-                <h2>Session Info</h2>
-                <form id="session-form">
-                    <div class="input-group">
-                        <label>User / Project ID</label>
-                        <input type="text" id="username" placeholder="e.g., karthikeyanV2K" />
-                    </div>
-                    <div class="input-group">
-                        <label>Active Model</label>
-                        <select id="activeModel">
-                            <option value="claude-sonnet-4-6">Claude 4.6 Sonnet</option>
-                            <option value="claude-opus-4-6">Claude 4.6 Opus</option>
-                            <option value="gpt-4o">GPT-4o</option>
-                        </select>
-                    </div>
-                    <div class="input-group">
-                        <label>Memory Limit (MB)</label>
-                        <input type="number" id="memoryLimit" value="64" />
-                    </div>
-                    <button type="submit" class="glow-btn">Update Session</button>
-                </form>
-            </div>
 
-            <div class="panel-section stats-section">
-                <h2>Graph Stats</h2>
-                <div class="stat-box">
-                    <span class="stat-label">Total Nodes</span>
-                    <span class="stat-value" id="nodeCount">0</span>
-                </div>
-                <div class="stat-box">
-                    <span class="stat-label">Relationships</span>
-                    <span class="stat-value" id="edgeCount">0</span>
-                </div>
-            </div>
-            
-            <div id="toast" class="toast hidden">Session Updated!</div>
-        </aside>
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🧠</div>
+    <h1>Overdrive<span>AI</span> — Memory Dashboard</h1>
+  </div>
+  <div class="header-meta">
+    <div class="live-dot"></div>
+    <span id="last-refresh">Connecting...</span>
+  </div>
+</header>
 
-        <!-- Main Graph Area -->
-        <main class="graph-container glass-panel">
-            <div id="graph-header">
-                <h2>Knowledge Graph Visualization</h2>
-                <button id="refresh-btn" class="icon-btn">🔄 Refresh Graph</button>
-            </div>
-            <div id="mynetwork"></div>
-            
-            <!-- Details Popup -->
-            <div id="node-details" class="glass-panel hidden">
-                <h3 id="detail-title">Node Details</h3>
-                <pre id="detail-content">Select a node...</pre>
-                <button id="close-details">Close</button>
-            </div>
-        </main>
-    </div>
-    
-    <script src="js/app.js"></script>
+<!-- Stats bar -->
+<div class="stats-bar">
+  <div class="stat-card">
+    <div class="stat-label">Total Tasks</div>
+    <div class="stat-value cyan" id="stat-total">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Completed</div>
+    <div class="stat-value green" id="stat-completed">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Pending</div>
+    <div class="stat-value yellow" id="stat-pending" style="color:var(--yellow)">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">IDEs Connected</div>
+    <div class="stat-value purple" id="stat-ides">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Models Used</div>
+    <div class="stat-value orange" id="stat-models">—</div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('memory',this)">🧠 Memory</button>
+  <button class="tab-btn" onclick="switchTab('roadmap',this)">🗺️ Roadmap</button>
+  <button class="tab-btn" onclick="switchTab('style',this)">✅ Code Style</button>
+  <button class="tab-btn" onclick="switchTab('heatmap',this)">🔥 Heatmap</button>
+</div>
+
+<!-- Tab: Memory -->
+<div id="tab-memory" class="tab-panel active">
+<!-- Toolbar -->
+<div class="toolbar">
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="search" id="search" placeholder="Search tasks, reasoning, code..." />
+  </div>
+  <select id="filter-ide">
+    <option value="">All IDEs</option>
+    <option value="Antigravity">Antigravity</option>
+    <option value="Kiro">Kiro</option>
+    <option value="VSCode">VS Code</option>
+    <option value="Copilot">Copilot</option>
+    <option value="External API">External API</option>
+  </select>
+  <select id="filter-status">
+    <option value="">All Status</option>
+    <option value="completed">✅ Completed</option>
+    <option value="pending">⏳ Pending</option>
+    <option value="error">❌ Error</option>
+  </select>
+  <button class="btn primary" id="refresh-btn">↻ Refresh</button>
+  <span class="refresh-info" id="refresh-info">Auto-refresh: 10s</span>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+  <table id="main-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Task</th>
+        <th>Model</th>
+        <th>IDE</th>
+        <th>Status</th>
+        <th>Time</th>
+        <th>Reasoning</th>
+      </tr>
+    </thead>
+    <tbody id="table-body">
+      <tr><td colspan="7" class="empty-state"><span class="loading">⟳</span> Loading memory...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /tab-memory -->
+
+<!-- Tab: Roadmap -->
+<div id="tab-roadmap" class="tab-panel">
+  <div class="feature-grid" id="feature-grid"><p style="color:var(--muted);padding:40px 32px">Loading roadmap...</p></div>
+</div>
+
+<!-- Tab: Style -->
+<div id="tab-style" class="tab-panel">
+  <div class="style-list" id="style-list"><p style="color:var(--muted);padding:40px 32px">Loading style rules...</p></div>
+</div>
+
+<!-- Tab: Heatmap -->
+<div id="tab-heatmap" class="tab-panel">
+  <div class="heatmap-wrap">
+    <table><thead><tr><th>IDE</th><th>Model</th><th>Category</th><th>Tasks</th><th>Success Rate</th></tr></thead>
+    <tbody id="heatmap-body"><tr><td colspan="5" style="color:var(--muted);padding:40px">Loading heatmap...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Detail panel -->
+<div class="detail-panel" id="detail-panel">
+  <div class="detail-header">
+    <div class="detail-title" id="detail-title">Task Details</div>
+    <button class="close-btn" id="close-panel">✕</button>
+  </div>
+  <div id="detail-body"></div>
+</div>
+
+<script>
+  let allTasks  = [];
+  let countdown = 10;
+  let timer;
+
+  const ideIcon = {
+    'Antigravity':  '🌀',
+    'Kiro':         '⚡',
+    'VSCode':       '💻',
+    'Copilot':      '🤖',
+    'External API': '🔌',
+    'Unknown':      '❓',
+  };
+
+  const statusIcon = {
+    completed: '✅',
+    pending:   '⏳',
+    error:     '❌',
+    review:    '🔍',
+    blocked:   '🚫',
+  };
+
+  function timeAgo(ts) {
+    if (!ts) return '—';
+    const diff = Date.now() - ts;
+    if (diff < 60000)     return `${Math.round(diff/1000)}s ago`;
+    if (diff < 3600000)   return `${Math.round(diff/60000)}m ago`;
+    if (diff < 86400000)  return `${Math.round(diff/3600000)}h ago`;
+    return new Date(ts).toLocaleDateString();
+  }
+
+  function ideClass(ide) {
+    return 'ide-' + (ide || 'Unknown').replace(/\s+/g, '');
+  }
+
+  function renderTable(tasks) {
+    const body = document.getElementById('table-body');
+    if (!tasks.length) {
+      body.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+        <h3>No tasks yet</h3>
+        <p>Use <code>ask_agent</code> from any IDE to start building memory.</p>
+      </div></td></tr>`;
+      return;
+    }
+
+    body.innerHTML = tasks.map((t, i) => `
+      <tr data-idx="${i}">
+        <td class="num">${i + 1}</td>
+        <td><div class="task-desc">${escHtml(t.description)}</div></td>
+        <td><span class="model-tag">${escHtml(t.model)}</span></td>
+        <td><span class="ide-badge ${ideClass(t.ide)}">${ideIcon[t.ide] || '?'} ${escHtml(t.ide)}</span></td>
+        <td><span class="status-badge status-${t.status || 'unknown'}">${statusIcon[t.status] || '?'} ${escHtml(t.status)}</span></td>
+        <td class="time-tag">${timeAgo(t.ts)}</td>
+        <td><div class="reasoning-text">${escHtml(t.reasoning || '—')}</div></td>
+      </tr>
+    `).join('');
+
+    // Row click → detail panel
+    body.querySelectorAll('tr[data-idx]').forEach(row => {
+      row.addEventListener('click', () => openDetail(tasks[+row.dataset.idx]));
+    });
+  }
+
+  function openDetail(task) {
+    document.getElementById('detail-title').textContent = task.description;
+    document.getElementById('detail-body').innerHTML = `
+      <div class="detail-field">
+        <label>IDE Source</label>
+        <div class="val"><span class="ide-badge ${ideClass(task.ide)}">${ideIcon[task.ide] || '?'} ${escHtml(task.ide)}</span></div>
+      </div>
+      <div class="detail-field">
+        <label>Model</label>
+        <div class="val model-tag">${escHtml(task.model)}</div>
+      </div>
+      <div class="detail-field">
+        <label>Status</label>
+        <div class="val"><span class="status-badge status-${task.status}">${statusIcon[task.status] || '?'} ${escHtml(task.status)}</span></div>
+      </div>
+      <div class="detail-field">
+        <label>Timestamp</label>
+        <div class="val">${task.ts ? new Date(task.ts).toLocaleString() : '—'}</div>
+      </div>
+      ${task.reasoning ? `<div class="detail-field"><label>Reasoning</label><div class="val">${escHtml(task.reasoning)}</div></div>` : ''}
+      <div class="detail-field">
+        <label>Node ID</label>
+        <pre>${escHtml(task.id || '—')}</pre>
+      </div>
+    `;
+    document.getElementById('detail-panel').classList.add('open');
+  }
+
+  document.getElementById('close-panel').onclick = () =>
+    document.getElementById('detail-panel').classList.remove('open');
+
+  function updateStats(tasks) {
+    const completed = tasks.filter(t => t.status === 'completed').length;
+    const pending   = tasks.filter(t => t.status === 'pending').length;
+    const ides      = new Set(tasks.map(t => t.ide)).size;
+    const models    = new Set(tasks.map(t => t.model).filter(Boolean)).size;
+    document.getElementById('stat-total').textContent     = tasks.length;
+    document.getElementById('stat-completed').textContent = completed;
+    document.getElementById('stat-pending').textContent   = pending;
+    document.getElementById('stat-ides').textContent      = ides;
+    document.getElementById('stat-models').textContent    = models;
+  }
+
+  function applyFilters() {
+    const q   = document.getElementById('search').value.toLowerCase();
+    const ide = document.getElementById('filter-ide').value;
+    const sta = document.getElementById('filter-status').value;
+    const filtered = allTasks.filter(t => {
+      const matchQ   = !q   || (t.description + t.reasoning + t.model + t.ide).toLowerCase().includes(q);
+      const matchIde = !ide || t.ide === ide;
+      const matchSta = !sta || t.status === sta;
+      return matchQ && matchIde && matchSta;
+    });
+    renderTable(filtered);
+  }
+
+  async function loadTasks() {
+    try {
+      const res = await fetch('/api/tasks');
+      const data = await res.json();
+      allTasks = data.tasks || [];
+      updateStats(allTasks);
+      applyFilters();
+      document.getElementById('last-refresh').textContent = 'Updated ' + timeAgo(Date.now() - 500);
+    } catch (e) {
+      document.getElementById('last-refresh').textContent = 'Connection error — retrying...';
+    }
+  }
+
+  function startCountdown() {
+    clearInterval(timer);
+    countdown = 10;
+    document.getElementById('refresh-info').textContent = `Auto-refresh: ${countdown}s`;
+    timer = setInterval(() => {
+      countdown--;
+      document.getElementById('refresh-info').textContent = `Auto-refresh: ${countdown}s`;
+      if (countdown <= 0) {
+        loadTasks();
+        countdown = 10;
+      }
+    }, 1000);
+  }
+
+  document.getElementById('refresh-btn').onclick = () => { loadTasks(); startCountdown(); };
+  document.getElementById('search').oninput      = applyFilters;
+  document.getElementById('filter-ide').onchange = applyFilters;
+  document.getElementById('filter-status').onchange = applyFilters;
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function switchTab(name, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    btn.classList.add('active');
+    if (name === 'roadmap') loadRoadmap();
+    if (name === 'style')   loadStyles();
+    if (name === 'heatmap') loadHeatmap();
+  }
+
+  async function loadRoadmap() {
+    const grid = document.getElementById('feature-grid');
+    try {
+      const { features } = await (await fetch('/api/features')).json();
+      if (!features?.length) { grid.innerHTML = '<p style="color:var(--muted);padding:40px 32px">No features planned yet. Use <code>store_feature</code> to add roadmap items.</p>'; return; }
+      const priClass = { high:'pri-high', medium:'pri-medium', low:'pri-low' };
+      grid.innerHTML = features.map(f => `
+        <div class="feature-card ${f.dead?'dead':''}">
+          <div class="fc-title">${f.dead?'💀':'📌'} ${escHtml(f.title)}</div>
+          <div class="fc-desc">${escHtml(f.description||'No description')}</div>
+          <div class="fc-meta">
+            <span class="${priClass[f.priority]||'pri-medium'}">${(f.priority||'medium').toUpperCase()}</span>
+            ${f.dead?'<span style="color:var(--red);font-size:11px">⚠️ Dead '+f.ageDays+'d</span>':''}
+            <span style="font-size:11px;color:var(--muted)">${escHtml(f.ide||'')}</span>
+          </div>
+        </div>`).join('');
+    } catch(e) { grid.innerHTML = '<p style="color:var(--red);padding:40px">Error: ' + e.message + '</p>'; }
+  }
+
+  async function loadStyles() {
+    const list = document.getElementById('style-list');
+    try {
+      const { styles } = await (await fetch('/api/styles')).json();
+      if (!styles?.length) { list.innerHTML = '<p style="color:var(--muted);padding:40px">No style rules yet. Use <code>store_code_style</code> to teach the agent your style.</p>'; return; }
+      list.innerHTML = styles.map(s => {
+        const pct = Math.round((s.confidence||0)*100);
+        const color = pct>=80?'var(--green)':pct>=50?'var(--yellow)':'var(--muted)';
+        return `<div class="style-row">
+          <div class="style-top"><span class="style-pattern">${pct>=80?'✅':'⏳'} ${escHtml(s.pattern)}</span><span class="conf-pct">${pct}%</span></div>
+          ${s.example?`<div style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:8px">${escHtml(s.example)}</div>`:''}
+          <div class="conf-bar"><div class="conf-fill" style="width:${pct}%;background:${color}"></div></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">${s.observations||1} observation(s) · ${escHtml(s.language||'any')} · ${escHtml(s.ide||'')}</div>
+        </div>`;
+      }).join('');
+    } catch(e) { list.innerHTML = '<p style="color:var(--red);padding:40px">Error: ' + e.message + '</p>'; }
+  }
+
+  async function loadHeatmap() {
+    const body = document.getElementById('heatmap-body');
+    try {
+      const { heatmap } = await (await fetch('/api/heatmap')).json();
+      if (!heatmap?.length) { body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);padding:40px">Not enough data yet. Complete more tasks to build the heatmap.</td></tr>'; return; }
+      body.innerHTML = heatmap.map(h => {
+        const cls = h.successRate>=80?'high':h.successRate>=50?'med':'low';
+        return `<tr>
+          <td><span class="ide-badge ${('ide-'+h.ide).replace(/\s+/g,'')}">🌀 ${escHtml(h.ide)}</span></td>
+          <td class="model-tag">${escHtml(h.model)}</td>
+          <td><span class="cat-badge">${escHtml(h.category)}</span></td>
+          <td class="num">${h.total}</td>
+          <td><div class="success-bar"><div class="bar-bg"><div class="bar-fill ${cls}" style="width:${h.successRate}%"></div></div><span style="font-size:12px;font-family:'JetBrains Mono',monospace">${h.successRate}%</span></div></td>
+        </tr>`;
+      }).join('');
+    } catch(e) { body.innerHTML = '<tr><td colspan="5" style="color:var(--red)">Error: ' + e.message + '</td></tr>'; }
+  }
+
+  // Init
+  loadTasks();
+  startCountdown();
+</script>
 </body>
 </html>

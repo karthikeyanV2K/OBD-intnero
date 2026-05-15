@@ -2,21 +2,19 @@
  * model-router.js
  * Model-agnostic routing layer.
  *
- * Key features:
- *   1. Uses compressed graph context — not raw chat history
- *   2. Mid-session model switch via RAM snapshot + graph handoff node
- *   3. Tracks every call to TimeSeries engine
- *   4. Publishes results to Streaming engine for async consumers
+ * Key design:
+ *   - SDK requires are LAZY (inside adapter functions) — no crash if no API key set
+ *   - ask_agent bypasses adapters entirely (context-provider mode)
+ *   - Adding a new model = 1 function + 1 line in ADAPTERS map
+ *   - All logs → stderr only
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
-const OpenAI    = require('openai');
 const { getEngines } = require('./agent-db');
 const { loadCompressedContext, storeAgentTurn } = require('./knowledge');
 const { assemblePrompt } = require('./prompt-builder');
 
 // ─────────────────────────────────────────────
-// Model adapters — swap these for any new model
+// Model adapters — add new models here ONLY
 // ─────────────────────────────────────────────
 
 const ADAPTERS = {
@@ -24,13 +22,14 @@ const ADAPTERS = {
   'claude-opus-4-6':   callClaude,
   'gpt-4o':            callOpenAI,
   'gpt-4o-mini':       callOpenAI,
-  // Add any new model here — the router stays the same
-  // 'gemini-2.5-pro': callGemini,
-  // 'llama-3':        callLlama,
+  // Add any new model here — the router stays the same:
+  // 'gemini-2.5-pro':  callGemini,
+  // 'llama-3':         callLlama,
 };
 
 // ─────────────────────────────────────────────
-// MAIN: Route a task through the agent
+// MAIN: Route a task (used by submit_async_task)
+// ask_agent does NOT call this — it uses context-provider mode
 // ─────────────────────────────────────────────
 
 async function routeTask(taskDesc, modelName) {
@@ -40,129 +39,117 @@ async function routeTask(taskDesc, modelName) {
 
   if (!adapter) throw new Error(`No adapter for model: ${modelName}`);
 
-  // 1. Build prompt — resolves "that/this/it" + injects DB knowledge
   const { system, user, meta } = await assemblePrompt(taskDesc, { model: modelName });
 
-  // 2. Log what reference was resolved (visible in server logs / VS Code Output panel)
   if (meta.referenceResolved) {
     console.error(`[router] Reference resolved: "${meta.referenceResolved}"`);
   }
-  console.error(`[router] System prompt: ~${meta.systemTokens} tokens  |  model: ${modelName}`);
+  console.error(`[router] ~${meta.systemTokens} tokens | model: ${modelName}`);
 
-  // 3. Call the selected model with structured { system, user } prompt
   const result = await adapter(system, user, modelName);
-
   const latency = Date.now() - startTime;
 
-  // 4. Track metrics
-  tsDb.insertMeasurement('token_usage', Date.now() / 1000, result.tokensUsed, { 
-    model: modelName,
-    task_type: classifyTask(taskDesc),
-  });
-  tsDb.insertMeasurement('latency_ms',  Date.now() / 1000, latency, { model: modelName });
+  // Track metrics
+  try {
+    tsDb.insertMeasurement('token_usage', Date.now() / 1000, result.tokensUsed, { model: modelName });
+    tsDb.insertMeasurement('latency_ms',  Date.now() / 1000, latency,           { model: modelName });
+  } catch (e) { console.error('[router] metrics error:', e.message); }
 
-  // 5. Stream result to consumers
-  streamDb.publish('model_results', {
-    task: taskDesc,
-    model: modelName,
-    result: result.text,
-    tokens: result.tokensUsed,
-    latency,
-    referenceResolved: meta.referenceResolved,
-    ts: Date.now(),
-  });
-
-  // 6. Store to knowledge graph (async)
+  // Store result to knowledge graph
   storeAgentTurn({
     taskDesc,
     model: modelName,
     reasoningChain: result.reasoning || result.text,
     codeOutput: { code: result.text, language: 'javascript' },
-  }).catch(err => console.warn('[knowledge] store failed:', err.message));
+  }).catch(err => console.error('[knowledge] store failed:', err.message));
 
-  // 7. Update RAM session so NEXT call can resolve "that" to THIS result
-  ramDb.insert('session', {
-    task: taskDesc,
-    task_id: `task_${startTime}`,
-    model: modelName,
-    result_preview: result.text.slice(0, 200),
-    ts: Date.now(),
-  });
+  // Update RAM session
+  try {
+    ramDb.insert('session', {
+      task: taskDesc,
+      task_id: `task_${startTime}`,
+      model: modelName,
+      result_preview: result.text.slice(0, 200),
+      ts: Date.now(),
+    });
+  } catch (e) { console.error('[router] RAM insert error:', e.message); }
 
   return result.text;
 }
 
 // ─────────────────────────────────────────────
 // MODEL SWITCH mid-session
-// The key: new model gets graph context, not chat dump
 // ─────────────────────────────────────────────
 
-async function switchModel(currentTaskId, newModel) {
+async function switchModel(currentTaskId, newModel, reason = 'user-requested') {
   const { graphDb, ramDb } = getEngines();
 
-  // 1. Snapshot current RAM session before switching
-  //    This lets us restore exactly if the new model fails
-  const snapshot = ramDb.snapshot();
+  // 1. Snapshot RAM before switching (rollback point)
+  let snapshot = null;
+  try { snapshot = ramDb.snapshot(); } catch (_) {}
 
-  // 2. Write a ModelSwitch node to the graph
-  //    New model can see: what was being worked on + why we switched
-  const session = ramDb.query('SELECT * FROM session ORDER BY ts DESC LIMIT 1')[0];
-  graphDb.createNode('ModelSwitch', {
-    from_model: session?.model || 'unknown',
-    to_model: newModel,
-    reason: 'user-requested',
-    task_context: session?.task || null,
-    timestamp: Date.now(),
-  });
+  // 2. Write ModelSwitch node to graph
+  let session = {};
+  try {
+    const rows = ramDb.query('SELECT * FROM session ORDER BY ts DESC LIMIT 1');
+    session = rows[0] || {};
+  } catch (_) {}
 
-  // 3. Load compressed context for handoff
-  const ctx = await loadCompressedContext(session?.task || '');
+  try {
+    graphDb.createNode('ModelSwitch', {
+      from_model:   session.model || 'unknown',
+      to_model:     newModel,
+      reason,
+      ide:          process.env.OVERDRIVE_IDE || 'Unknown',
+      task_context: session.task || null,
+      timestamp:    Date.now(),
+    });
+  } catch (e) { console.error('[router] ModelSwitch node error:', e.message); }
 
-  // 4. Update RAM session with new model
-  ramDb.insert('session', {
-    model: newModel,
-    task: session?.task || null,
-    context: JSON.stringify(ctx),
-    snapshot_ref: Date.now(), // reference to snapshot if rollback needed
-    ts: Date.now(),
-  });
+  // 3. Compressed context for handoff (~410 tokens)
+  const ctx = await loadCompressedContext(session.task || '');
 
-  console.error(`[router] Switched to ${newModel}. Context compressed to ~${JSON.stringify(ctx).length} chars`);
+  // 4. Update RAM with new model
+  try {
+    ramDb.insert('session', {
+      model:        newModel,
+      task:         session.task || null,
+      context:      JSON.stringify(ctx),
+      snapshot_ref: Date.now(),
+      ts:           Date.now(),
+    });
+  } catch (_) {}
 
-  // Return snapshot handle so caller can restore if needed
+  console.error(`[router] Switched ${session.model || '?'} → ${newModel}. ~${JSON.stringify(ctx).length} chars context.`);
   return { snapshot, compressedContext: ctx };
 }
 
 // ─────────────────────────────────────────────
-// Build minimal prompt from compressed context
-// This is where token savings happen:
-// instead of dumping history, we inject structured summaries
+// Analytics
 // ─────────────────────────────────────────────
 
-function buildPrompt(taskDesc, ctx) {
-  const parts = [];
-
-  if (ctx.priorReasoning?.length) {
-    parts.push(`Prior reasoning on similar tasks:\n${ctx.priorReasoning.join('\n')}`);
+function getModelStats(modelName, hours = 24) {
+  const { tsDb } = getEngines();
+  const since = Math.floor(Date.now() / 1000) - (hours * 3600);
+  const now   = Math.floor(Date.now() / 1000);
+  try {
+    return {
+      avgTokens:  tsDb.aggregateTimeseries('token_usage', { func: 'avg', start: since, end: now }),
+      avgLatency: tsDb.aggregateTimeseries('latency_ms',  { func: 'avg', start: since, end: now }),
+      totalCalls: tsDb.queryTimeseries('token_usage',     { start: since, end: now }).length,
+    };
+  } catch (_) {
+    return { avgTokens: 0, avgLatency: 0, totalCalls: 0 };
   }
-  if (ctx.recentSignatures?.length) {
-    parts.push(`Relevant code signatures from codebase:\n${ctx.recentSignatures.join('\n')}`);
-  }
-  if (ctx.relatedPatterns?.length) {
-    parts.push(`Known patterns:\n${ctx.relatedPatterns.join('\n')}`);
-  }
-
-  parts.push(`Current task: ${taskDesc}`);
-
-  return parts.join('\n\n---\n\n');
-  // Typical output: 400-600 tokens vs 5,000-15,000 for raw history
 }
 
 // ─────────────────────────────────────────────
-// Model adapters — add new models here ONLY
+// Model adapters — LAZY require (no crash without API keys)
 // ─────────────────────────────────────────────
 
 async function callClaude(system, user, modelName) {
+  // eslint-disable-next-line import/no-extraneous-dependencies
+  const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic();
   const response = await client.messages.create({
     model: modelName,
@@ -178,13 +165,14 @@ async function callClaude(system, user, modelName) {
 }
 
 async function callOpenAI(system, user, modelName) {
+  const { OpenAI } = require('openai');
   const client = new OpenAI();
   const response = await client.chat.completions.create({
     model: modelName,
     max_tokens: 4096,
     messages: [
       { role: 'system', content: system },
-      { role: 'user', content: user },
+      { role: 'user',   content: user   },
     ],
   });
   return {
@@ -194,29 +182,8 @@ async function callOpenAI(system, user, modelName) {
   };
 }
 
-// ─────────────────────────────────────────────
-// Analytics: query TimeSeries for model comparison
-// ─────────────────────────────────────────────
+// Example — adding Gemini takes exactly 2 lines:
+// async function callGemini(system, user, modelName) { ... }
+// ADAPTERS['gemini-2.5-pro'] = callGemini;
 
-function getModelStats(modelName, hours = 24) {
-  const { tsDb } = getEngines();
-  const since = Math.floor(Date.now() / 1000) - (hours * 3600);
-  const now   = Math.floor(Date.now() / 1000);
-
-  return {
-    avgTokens:  tsDb.aggregateTimeseries('token_usage', { func: 'avg', start: since, end: now }),
-    avgLatency: tsDb.aggregateTimeseries('latency_ms',  { func: 'avg', start: since, end: now }),
-    totalCalls: tsDb.queryTimeseries('token_usage', { start: since, end: now }).length,
-  };
-}
-
-function classifyTask(taskDesc) {
-  const d = taskDesc.toLowerCase();
-  if (d.includes('fix') || d.includes('bug')) return 'debug';
-  if (d.includes('test'))  return 'testing';
-  if (d.includes('refact')) return 'refactor';
-  if (d.includes('explain') || d.includes('what')) return 'explain';
-  return 'generate';
-}
-
-module.exports = { routeTask, switchModel, getModelStats, buildPrompt, ADAPTERS };
+module.exports = { routeTask, switchModel, getModelStats, ADAPTERS };

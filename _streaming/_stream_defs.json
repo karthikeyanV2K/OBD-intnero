@@ -1,0 +1,20 @@
+{
+  "model_results": {
+    "name": "model_results",
+    "partitions": 4,
+    "retention_seconds": 0,
+    "created_at": 1778790103
+  },
+  "task_queue": {
+    "name": "task_queue",
+    "partitions": 4,
+    "retention_seconds": 0,
+    "created_at": 1778790103
+  },
+  "agent_events": {
+    "name": "agent_events",
+    "partitions": 2,
+    "retention_seconds": 0,
+    "created_at": 1778790103
+  }
+}
