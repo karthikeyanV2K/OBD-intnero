@@ -17,9 +17,9 @@
     "worker": "node -e \"const {initAllEngines,getEngines}=require('./agent-db');const {startWorker}=require('./task-worker');(async()=>{await initAllEngines();await startWorker(0);})()\"",
     "dev": "concurrently \"npm run mcp\" \"npm run server\" \"npm run worker\"",
     "cli": "node bin/overdrive",
-    "test": "node -e \"console.log('Tests would run here')\"",
+    "test": "node test/test-core.js",
     "prepare": "npm run build",
-    "build": "echo 'Build complete'"
+    "build": "echo Build complete"
   },
   "keywords": [
     "ai",
@@ -56,8 +56,8 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^0.5.0",
     "cors": "^2.8.0",
+    "dotenv": "^16.6.1",
     "express": "^4.18.0",
-    "odb-echograph": "^1.0.2",
     "openai": "^4.0.0",
     "overdrive-db": "^2.4.6"
   },

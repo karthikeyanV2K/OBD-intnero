@@ -148,9 +148,12 @@ function getModelStats(modelName, hours = 24) {
 // ─────────────────────────────────────────────
 
 async function callClaude(system, user, modelName) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY not set. Add it to your .env file.');
+  }
   // eslint-disable-next-line import/no-extraneous-dependencies
   const Anthropic = require('@anthropic-ai/sdk');
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await client.messages.create({
     model: modelName,
     max_tokens: 4096,
@@ -165,8 +168,11 @@ async function callClaude(system, user, modelName) {
 }
 
 async function callOpenAI(system, user, modelName) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY not set. Add it to your .env file.');
+  }
   const { OpenAI } = require('openai');
-  const client = new OpenAI();
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const response = await client.chat.completions.create({
     model: modelName,
     max_tokens: 4096,

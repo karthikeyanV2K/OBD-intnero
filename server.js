@@ -102,6 +102,7 @@ app.post('/api/external/task', async (req, res) => {
       code:        (code || '').substring(0, 400),
       ts:          Date.now(),
     });
+    broadcastSSE('task_created', { nodeId, task, model, status: status || 'completed' });
     res.json({ ok: true, node_id: nodeId, ide: 'External API' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -146,6 +147,38 @@ app.get('/api/external/search', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────
+// /api/session — GET current session, POST to update
+// ─────────────────────────────────────────────
+
+app.get('/api/session', async (req, res) => {
+  await ensureInit();
+  const { ramDb } = getEngines();
+  try {
+    const rows = ramDb.query('SELECT * FROM session ORDER BY ts DESC LIMIT 1');
+    res.json(rows[0] || {});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/session', async (req, res) => {
+  await ensureInit();
+  const { ramDb } = getEngines();
+  try {
+    const { username, model, memoryLimit } = req.body;
+    ramDb.insert('session', {
+      username: username || 'default',
+      model: model || process.env.OVERDRIVE_MODEL || 'claude-sonnet-4-6',
+      memoryLimit: memoryLimit || 64,
+      ts: Date.now(),
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // /api/features — roadmap items with dead-feature detection
 app.get('/api/features', async (req, res) => {
   await ensureInit();
@@ -180,6 +213,32 @@ app.get('/api/ghosts', async (req, res) => {
   try { res.json({ ghosts: getGhostTasks() }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ─────────────────────────────────────────────
+// /events — SSE endpoint for live browser updates
+// Chrome extension and dashboard listen here for real-time events
+// ─────────────────────────────────────────────
+
+const sseClients = new Set();
+
+app.get('/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.write('data: {"type":"connected"}\n\n');
+  sseClients.add(res);
+  req.on('close', () => sseClients.delete(res));
+});
+
+function broadcastSSE(event, data) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(msg); } catch (_) { sseClients.delete(client); }
+  }
+}
 
 // ─────────────────────────────────────────────
 // Auto-port scan — no more EADDRINUSE crashes

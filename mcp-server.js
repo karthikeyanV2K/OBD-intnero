@@ -14,7 +14,7 @@ const { CallToolRequestSchema, ListToolsRequestSchema } = require('@modelcontext
 const { spawn }                = require('child_process');
 const path                     = require('path');
 
-try { require('dotenv').config(); } catch (_) {}
+try { require('dotenv').config(); } catch (_) { console.error('[mcp] dotenv not found — install with: npm install dotenv'); }
 
 // ─────────────────────────────────────────────
 // Dashboard lifecycle — starts with IDE, dies with IDE

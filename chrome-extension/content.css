@@ -1,0 +1,14 @@
+/* OverDrive AI Agent — Content Styles */
+
+#overdrive-agent-btn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#overdrive-result-panel pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}

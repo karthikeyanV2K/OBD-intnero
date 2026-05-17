@@ -735,6 +735,14 @@
     } catch(e) { body.innerHTML = '<tr><td colspan="5" style="color:var(--red)">Error: ' + e.message + '</td></tr>'; }
   }
 
+  // ── SSE listener for live updates ──
+  function connectSSE() {
+    const evtSource = new EventSource('/events');
+    evtSource.addEventListener('task_created', () => { countdown = 2; }); // refresh soon
+    evtSource.onerror = () => setTimeout(connectSSE, 3000); // reconnect
+  }
+  connectSSE();
+
   // Init
   loadTasks();
   startCountdown();

@@ -91,12 +91,11 @@ function storeCodeStyle({ pattern, language, example, ide }) {
     });
 
     if (existing) {
-      // Increase confidence (max 1.0)
       const props = existing.properties || existing;
       const observations = (props.observations || 1) + 1;
       const confidence   = Math.min(1.0, observations / 10);
-      // Update node — recreate with higher confidence
       graphDb.createNode('CodeStyle', {
+        id: existing.id,
         pattern,
         language:     language || 'any',
         example:      example  || props.example || '',
@@ -107,7 +106,6 @@ function storeCodeStyle({ pattern, language, example, ide }) {
       });
       return { confidence, observations, updated: true };
     } else {
-      // First observation
       graphDb.createNode('CodeStyle', {
         pattern,
         language:     language || 'any',
@@ -249,23 +247,23 @@ function getSecurityRules() {
 // ─────────────────────────────────────────────
 
 const SECURITY_CHECKLIST = [
-  { rule: 'Validate all API inputs',               category: 'input',    severity: 'high'   },
-  { rule: 'Use parameterized queries (no SQL injection)', category: 'db', severity: 'critical' },
-  { rule: 'Add rate limiting to API endpoints',    category: 'api',      severity: 'high'   },
-  { rule: 'Use HTTPS only',                        category: 'transport', severity: 'high'  },
-  { rule: 'Sanitize HTML outputs (prevent XSS)',   category: 'output',   severity: 'high'   },
-  { rule: 'Add CSRF protection to forms',          category: 'forms',    severity: 'medium' },
-  { rule: 'Hash passwords with bcrypt/argon2',     category: 'auth',     severity: 'critical' },
-  { rule: 'Never log sensitive data (passwords, tokens)', category: 'logging', severity: 'high' },
-  { rule: 'Set security headers (helmet.js)',      category: 'headers',  severity: 'medium' },
-  { rule: 'Keep dependencies up to date',          category: 'deps',     severity: 'medium' },
+  { id: 'validate-inputs',   rule: 'Validate all API inputs',               category: 'input',    severity: 'high'   },
+  { id: 'param-queries',     rule: 'Use parameterized queries (no SQL injection)', category: 'db', severity: 'critical' },
+  { id: 'rate-limit',        rule: 'Add rate limiting to API endpoints',    category: 'api',      severity: 'high'   },
+  { id: 'https-only',        rule: 'Use HTTPS only',                        category: 'transport', severity: 'high'  },
+  { id: 'sanitize-xss',      rule: 'Sanitize HTML outputs (prevent XSS)',   category: 'output',   severity: 'high'   },
+  { id: 'csrf-protection',   rule: 'Add CSRF protection to forms',          category: 'forms',    severity: 'medium' },
+  { id: 'hash-passwords',    rule: 'Hash passwords with bcrypt/argon2',     category: 'auth',     severity: 'critical' },
+  { id: 'no-sensitive-logs', rule: 'Never log sensitive data (passwords, tokens)', category: 'logging', severity: 'high' },
+  { id: 'security-headers',  rule: 'Set security headers (helmet.js)',      category: 'headers',  severity: 'medium' },
+  { id: 'deps-up-to-date',   rule: 'Keep dependencies up to date',          category: 'deps',     severity: 'medium' },
 ];
 
 function getSecurityAudit() {
-  const applied = getSecurityRules().map(r => r.rule.toLowerCase());
+  const applied = getSecurityRules().map(r => r.rule.toLowerCase().trim());
   const report  = SECURITY_CHECKLIST.map(item => ({
     ...item,
-    applied: applied.some(a => a.includes(item.category) || item.rule.toLowerCase().includes(a.split(' ')[0])),
+    applied: applied.some(a => a === item.rule.toLowerCase().trim()),
   }));
   return {
     applied:   report.filter(r =>  r.applied),
@@ -510,14 +508,23 @@ function extractKeyword(taskDesc) {
 }
 
 async function embedText(text) {
-  return new Array(384).fill(0).map(() => Math.random()); // placeholder
+  const input = (text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const hash = (s) => { let h = 0; for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; } return h; };
+  const seed = hash(input);
+  const rng = (i) => { const x = Math.sin(seed * (i + 1) + 1) * 10000; return x - Math.floor(x); };
+  return new Array(384).fill(0).map((_, i) => rng(i));
 }
 
 async function findPatterns(taskDesc) {
   const { diskDb } = getEngines();
   try {
     const keyword = extractKeyword(taskDesc);
-    return diskDb.search('patterns', keyword).slice(0, 3).map(p => p.signature);
+    const fromPatterns = diskDb.search('patterns', keyword).slice(0, 3).map(p => p.signature);
+    if (fromPatterns.length > 0) return fromPatterns;
+    const fromSolutions = diskDb.query(
+      'SELECT code_signature FROM solutions ORDER BY created_at DESC LIMIT 3'
+    ).map(s => s.code_signature).filter(Boolean);
+    return fromSolutions;
   } catch (_) { return []; }
 }
 

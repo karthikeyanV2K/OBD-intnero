@@ -15,6 +15,8 @@ agent-*.odb
 # IDE
 .vscode/
 .idea/
+.cursor/
+.windsurf/
 *.swp
 *.swo
 *~

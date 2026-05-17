@@ -17,17 +17,23 @@ let streamDb = null, ramDb = null, diskDb = null;
 
 let _initialized = false;
 let _idleTimer    = null;
+let _busyCount    = 0;
 
 const IDLE_CLOSE_MS  = 30_000;
 const VECTOR_ENABLED = process.env.OVERDRIVE_VECTOR === '1';
 
 // ─────────────────────────────────────────────
 // Idle timer — closes expensive handles after inactivity
+// Uses busy counter to prevent closing mid-operation
 // ─────────────────────────────────────────────
+
+function markBusy() { _busyCount++; resetIdleTimer(); }
+function markIdle() { _busyCount = Math.max(0, _busyCount - 1); resetIdleTimer(); }
 
 function resetIdleTimer() {
   if (_idleTimer) clearTimeout(_idleTimer);
   _idleTimer = setTimeout(() => {
+    if (_busyCount > 0) { resetIdleTimer(); return; }
     try {
       if (graphDb)  { graphDb.close?.();  graphDb  = null; }
       if (tsDb)     { tsDb.close?.();     tsDb     = null; }
@@ -119,7 +125,10 @@ async function initAllEngines() {
 
 function getEngines() {
   resetIdleTimer();
-  return { graphDb, vectorDb, tsDb, streamDb, ramDb, diskDb };
+  return {
+    graphDb, vectorDb, tsDb, streamDb, ramDb, diskDb,
+    markBusy, markIdle,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -139,4 +148,4 @@ function categorizeTask(description) {
   return 'general';
 }
 
-module.exports = { initAllEngines, getEngines, categorizeTask };
+module.exports = { initAllEngines, getEngines, categorizeTask, markBusy, markIdle };
