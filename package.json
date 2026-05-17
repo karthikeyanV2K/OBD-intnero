@@ -17,7 +17,7 @@
     "worker": "node -e \"const {initAllEngines,getEngines}=require('./agent-db');const {startWorker}=require('./task-worker');(async()=>{await initAllEngines();await startWorker(0);})()\"",
     "dev": "concurrently \"npm run mcp\" \"npm run server\" \"npm run worker\"",
     "cli": "node bin/overdrive",
-    "test": "node test/test-core.js",
+    "test": "node test/test-core.js && node test/test-unit.js && node test/test-integration.js && node test/test-api.js",
     "prepare": "npm run build",
     "build": "echo Build complete"
   },

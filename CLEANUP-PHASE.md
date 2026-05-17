@@ -29,10 +29,12 @@ Polish the loose ends after the main feature work — git hygiene, dashboard reb
 
 ## 11d — Testing
 
-- [x] `npm test` runs `node test/test-core.js` — 6/6 tests pass
-- [x] Module-level imports validated: `agent-db`, `knowledge`, `model-router`, `task-worker`, `prompt-builder`, `server`
-- [ ] API smoke test: POST `/task`, GET `/health`, GET `/events` (requires server running)
-- [x] Test file: `test/test-core.js`
+- [x] `npm test` — 66 tests across 4 suites: core(6) + unit(31) + integration(17) + API(12)
+- [x] **test-core.js** — Module import validation (6 tests)
+- [x] **test-unit.js** — Pure function tests: `categorizeTask`, `estimateTokens`, `extractKeyword`, `embedText`, `getSecurityAudit`, `hasReference`, `ADAPTERS`, `getTaskStatus`
+- [x] **test-integration.js** — DB-dependent tests: engine init, graph CRUD, code styles, features, task queue, model switch
+- [x] **test-api.js** — HTTP API tests: all GET/POST endpoints + SSE content-type
+- [x] Bug fix: `getTaskStatus` was missing from `task-worker.js` (imported by `mcp-server.js` but not exported). Now implemented with in-memory tracker + graph DB fallback.
 
 ## 11e — Dependency Audit
 

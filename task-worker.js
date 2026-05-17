@@ -16,21 +16,63 @@ let workerSub = null;
 let isRunning = false;
 
 // ─────────────────────────────────────────────
+// In-memory task status tracker
+// Used by getTaskStatus to report async task progress
+// ─────────────────────────────────────────────
+
+const _taskStatus = new Map();
+let _statusListenerStarted = false;
+
+function _ensureStatusListener() {
+  if (_statusListenerStarted) return;
+  _statusListenerStarted = true;
+  try {
+    listenForResults((result) => {
+      if (result.task_id) {
+        _taskStatus.set(result.task_id, { status: 'completed', result, completed_at: Date.now() });
+      }
+    });
+  } catch (_) { /* engines not ready yet — will pick up status from graph later */ }
+}
+
+// ─────────────────────────────────────────────
 // SUBMIT: Push a task onto the queue
 // Called by VS Code extension or Chrome extension
 // ─────────────────────────────────────────────
 
 function submitTask(taskDesc, model = 'claude-sonnet-4-6', priority = 'normal') {
   const { streamDb } = getEngines();
+  const taskId = `task_${Date.now()}`;
   streamDb.publish('task_queue', {
-    id: `task_${Date.now()}`,
+    id: taskId,
     description: taskDesc,
     model,
     priority,
     submitted_at: Date.now(),
   });
+  _taskStatus.set(taskId, { status: 'queued', submitted_at: Date.now() });
+  _ensureStatusListener();
   console.error(`[worker] Task queued: "${taskDesc.slice(0, 60)}..."`);
-  return `task_${Date.now()}`;
+  return taskId;
+}
+
+// ─────────────────────────────────────────────
+// GET STATUS: Check async task progress
+// Falls back to graph DB scan if not in memory
+// ─────────────────────────────────────────────
+
+function getTaskStatus(taskId) {
+  const mem = _taskStatus.get(taskId);
+  if (mem) return { task_id: taskId, ...mem };
+  try {
+    const { graphDb } = getEngines();
+    const tasks = graphDb.listNodes('Task') || [];
+    const match = tasks.find(t => String(t.id) === taskId || String(t._id) === taskId);
+    if (match) {
+      return { task_id: taskId, status: 'completed', data: match.properties || match.props || match };
+    }
+  } catch (_) {}
+  return { task_id: taskId, status: 'unknown' };
 }
 
 // ─────────────────────────────────────────────
@@ -134,4 +176,4 @@ function sleep(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
 
-module.exports = { submitTask, startWorker, stopWorker, listenForResults };
+module.exports = { submitTask, startWorker, stopWorker, listenForResults, getTaskStatus };
